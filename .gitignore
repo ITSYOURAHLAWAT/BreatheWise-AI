@@ -1,0 +1,30 @@
+# Git ignore for BreatheWise AI
+
+# Environment secrets — NEVER commit these
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Next.js build output
+.next/
+out/
+build/
+
+# Node modules
+node_modules/
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

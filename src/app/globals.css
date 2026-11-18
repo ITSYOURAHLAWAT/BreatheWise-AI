@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   BreatheWise AI — Global CSS
+   Breathable palette: sky blues, crisp whites, smog alerts
+   WCAG AAA contrast targets throughout
+   ========================================================= */
+
+:root {
+  --color-brand-primary: #0284c7;   /* sky-600 — primary actions */
+  --color-brand-light:  #bae6fd;   /* sky-200 — subtle fills     */
+  --color-brand-dark:   #0c4a6e;   /* sky-900 — text on light bg */
+  --color-smog-mild:    #d97706;   /* amber-600 — AQI 51-100     */
+  --color-smog-moderate:#ea580c;   /* orange-600                 */
+  --color-smog-severe:  #dc2626;   /* red-600                    */
+}
+
+/* Focus ring — WCAG AAA */
+*:focus-visible {
+  outline: 3px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Skip-to-content link for keyboard users */
+.skip-to-content {
+  @apply sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4
+         focus:z-50 focus:px-4 focus:py-2 focus:rounded-md
+         focus:bg-sky-700 focus:text-white focus:font-semibold;
+}
+
+/* Loading pulse & text-wrap utility */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* =========================================================
+   WCAG AAA Accessibility: Reduced Motion Support
+   Forces instant transitions/animations when users prefer reduced motion.
+   ========================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
