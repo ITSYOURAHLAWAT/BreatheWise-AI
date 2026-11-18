@@ -17,14 +17,17 @@ import { UserProfileSchema } from '@/lib/schemas';
 import { generateAirQualityPlan } from '@/lib/gemini';
 import type { AiResponse } from '@/lib/types';
 
+/** Maximum duration for Vercel serverless functions in seconds. */
+export const maxDuration = 60;
+
 /** Standard HTTP headers for JSON responses preventing caching of sensitive plans. */
 const RESPONSE_HEADERS = {
   'Content-Type': 'application/json',
   'Cache-Control': 'no-store, no-cache, must-revalidate',
 } as const;
 
-/** Default API timeout duration in milliseconds (15 seconds). */
-const API_TIMEOUT_MS = 15000;
+/** Default API timeout duration in milliseconds (35 seconds to safely accommodate complex structured generation). */
+const API_TIMEOUT_MS = 35000;
 
 /**
  * Shape of standard error payload returned by `/api/generate-plan`.
@@ -37,7 +40,7 @@ interface ApiErrorResponse {
 /**
  * Executes an asynchronous task with a strict timeout using `AbortController`.
  * If the promise does not resolve within `timeoutMs`, the controller aborts and rejects
- * with a descriptive Timeout Error.
+ * with a descriptive Timeout Error via `Promise.race`.
  *
  * @template T - The resolved value type of the operation.
  * @param operation - A callback receiving the `AbortSignal` and returning a Promise.
@@ -50,14 +53,21 @@ async function withTimeout<T>(
   timeoutMs: number
 ): Promise<T> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error(`Operation timed out after ${timeoutMs}ms.`));
-  }, timeoutMs);
+  let timer: NodeJS.Timeout | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Operation timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+  });
 
   try {
-    return await operation(controller.signal);
+    return await Promise.race([operation(controller.signal), timeoutPromise]);
   } finally {
-    clearTimeout(timeoutId);
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -123,7 +133,11 @@ export async function POST(
   } catch (err: unknown) {
     if (err instanceof Error) {
       processingError = err;
-      if (err.message.includes('timed out') || err.name === 'AbortError') {
+      if (
+        err.message.toLowerCase().includes('time') ||
+        err.message.toLowerCase().includes('abort') ||
+        err.name === 'AbortError'
+      ) {
         isTimedOut = true;
       }
     } else {
