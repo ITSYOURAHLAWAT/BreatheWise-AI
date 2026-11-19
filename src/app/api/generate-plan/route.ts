@@ -14,11 +14,11 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { UserProfileSchema } from '@/lib/schemas';
-import { generateAirQualityPlan } from '@/lib/gemini';
-import { fetchEnvironmentalSnapshot } from '@/lib/environmental-service.ts';
-import { analyze24HourVentilation } from '@/lib/ventilation-engine.ts';
-import { getGrapRegulation } from '@/lib/grap-regulations.ts';
-import { getEmergencyDirectory } from '@/lib/emergency-directory.ts';
+import { generateAirQualityPlan, generateDeterministicFallbackPlan } from '@/lib/gemini';
+import { fetchEnvironmentalSnapshot } from '@/lib/environmental-service';
+import { analyze24HourVentilation } from '@/lib/ventilation-engine';
+import { getGrapRegulation } from '@/lib/grap-regulations';
+import { getEmergencyDirectory } from '@/lib/emergency-directory';
 import type { AiResponse } from '@/lib/types';
 
 /** Maximum duration for Vercel serverless functions in seconds. */
@@ -30,8 +30,11 @@ const RESPONSE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
 } as const;
 
-/** Default API timeout duration in milliseconds (35 seconds to safely accommodate complex structured generation). */
-const API_TIMEOUT_MS = 35000;
+/**
+ * Strict timeout duration for external AI generation (10 seconds).
+ * Ensures serverless execution returns well before Vercel's execution threshold.
+ */
+const API_TIMEOUT_MS = 10000;
 
 /**
  * Shape of standard error payload returned by `/api/generate-plan`.
@@ -124,102 +127,91 @@ export async function POST(
     );
   }
 
-  // 3. Execution Guardrail: Strict try / catch / finally block with Environmental Grounding & Timeout Protection
+  // 3. Execution Guardrail: Resilient Generation with Multi-Tier Fallback & Timeout Protection
   let plan: AiResponse | null = null;
-  let processingError: Error | null = null;
-  let isTimedOut = false;
+  let environmentalSnapshot: Awaited<ReturnType<typeof fetchEnvironmentalSnapshot>> | undefined;
+  let ventilationAnalysis: ReturnType<typeof analyze24HourVentilation> | undefined;
 
   try {
-    const environmentalSnapshot = await fetchEnvironmentalSnapshot(validationResult.data.city);
-    const ventilationAnalysis = analyze24HourVentilation(environmentalSnapshot.hourlyForecast);
-
-    plan = await withTimeout<AiResponse>(
-      (signal) =>
-        generateAirQualityPlan(
-          validationResult.data,
-          signal,
-          environmentalSnapshot,
-          ventilationAnalysis
-        ),
-      API_TIMEOUT_MS
-    );
-
-    if (plan) {
-      if (environmentalSnapshot) {
-        plan.environmentalData = environmentalSnapshot as unknown as Record<string, unknown>;
-        if (environmentalSnapshot.cpcbResult.prominentPollutant) {
-          plan.prominentPollutant = environmentalSnapshot.cpcbResult.prominentPollutant;
-        }
-
-        // Synchronize safe ventilation window with authoritative scientific calculation
-        plan.safeVentilationWindow = {
-          timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
-          expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
-          recommendation: ventilationAnalysis.primaryWindow.recommendation,
-          isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
-          status: ventilationAnalysis.primaryWindow.status,
-          confidence: ventilationAnalysis.primaryWindow.confidence,
-          scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
-          contiguousIntervals: ventilationAnalysis.contiguousIntervals as unknown as Array<Record<string, unknown>>,
-          indoorCo2Advice: ventilationAnalysis.indoorCo2Guidance as unknown as Record<string, unknown>,
-        };
-      }
-
-      // Synchronize CAQM GRAP regulation with current calculated AQI
-      plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
-      // Synchronize emergency hospital directory matched to user's location
-      plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
+    try {
+      environmentalSnapshot = await fetchEnvironmentalSnapshot(validationResult.data.city);
+      ventilationAnalysis = analyze24HourVentilation(environmentalSnapshot.hourlyForecast);
+    } catch (envErr) {
+      console.warn('[API /api/generate-plan] Environmental service snapshot unavailable, continuing:', envErr);
     }
-  } catch (err: unknown) {
-    if (err instanceof Error) {
-      processingError = err;
-      if (
-        err.message.toLowerCase().includes('time') ||
-        err.message.toLowerCase().includes('abort') ||
-        err.name === 'AbortError'
-      ) {
-        isTimedOut = true;
-      }
-    } else {
-      processingError = new Error('An unexpected server error occurred while generating the plan.');
-    }
-  } finally {
-    if (processingError) {
-      console.error(
-        '[API /api/generate-plan] Execution error:',
-        processingError.message
+
+    try {
+      plan = await withTimeout<AiResponse>(
+        (signal) =>
+          generateAirQualityPlan(
+            validationResult.data,
+            signal,
+            environmentalSnapshot,
+            ventilationAnalysis
+          ),
+        API_TIMEOUT_MS
       );
-    }
-  }
-
-  // 4. Return appropriate outcome based on error type
-  if (processingError || !plan) {
-    if (isTimedOut) {
-      return NextResponse.json(
-        {
-          error: 'Gateway Timeout: The AI service took too long to respond. Please try again.',
-        },
-        {
-          status: 504,
-          headers: RESPONSE_HEADERS,
-        }
+    } catch (llmErr) {
+      console.warn(
+        '[API /api/generate-plan] LLM generation exceeded timeout or threw error; deploying deterministic fallback plan:',
+        llmErr
+      );
+      plan = generateDeterministicFallbackPlan(
+        validationResult.data,
+        environmentalSnapshot,
+        ventilationAnalysis
       );
     }
 
-    const errorMessage =
-      processingError?.message ?? 'Failed to generate air quality plan.';
+    if (!plan) {
+      plan = generateDeterministicFallbackPlan(
+        validationResult.data,
+        environmentalSnapshot,
+        ventilationAnalysis
+      );
+    }
 
-    return NextResponse.json(
-      {
-        error: errorMessage,
-      },
-      {
-        status: 500,
-        headers: RESPONSE_HEADERS,
+    if (environmentalSnapshot) {
+      plan.environmentalData = environmentalSnapshot as unknown as Record<string, unknown>;
+      if (environmentalSnapshot.cpcbResult.prominentPollutant) {
+        plan.prominentPollutant = environmentalSnapshot.cpcbResult.prominentPollutant;
       }
+    }
+
+    if (ventilationAnalysis) {
+      // Synchronize safe ventilation window with authoritative scientific calculation
+      plan.safeVentilationWindow = {
+        timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
+        expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
+        recommendation: ventilationAnalysis.primaryWindow.recommendation,
+        isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
+        status: ventilationAnalysis.primaryWindow.status,
+        confidence: ventilationAnalysis.primaryWindow.confidence,
+        scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
+        contiguousIntervals: ventilationAnalysis.contiguousIntervals as unknown as Array<Record<string, unknown>>,
+        indoorCo2Advice: ventilationAnalysis.indoorCo2Guidance as unknown as Record<string, unknown>,
+      };
+    }
+
+    // Synchronize CAQM GRAP regulation with current calculated AQI
+    plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
+    // Synchronize emergency hospital directory matched to user's location
+    plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
+  } catch (fatalErr) {
+    console.error(
+      '[API /api/generate-plan] Fatal server error during generation; invoking emergency fallback plan:',
+      fatalErr
     );
+    plan = generateDeterministicFallbackPlan(
+      validationResult.data,
+      environmentalSnapshot,
+      ventilationAnalysis
+    );
+    plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
+    plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
   }
 
+  // 4. Guaranteed 200 OK Response: Deliver complete CPCB-grounded survival plan
   return NextResponse.json(plan, {
     status: 200,
     headers: RESPONSE_HEADERS,

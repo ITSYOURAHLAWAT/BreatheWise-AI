@@ -48,11 +48,20 @@ export default function HomePage(): React.ReactElement {
     setState({ status: 'loading', plan: null, errorMessage: null });
 
     try {
-      const response = await fetch('/api/generate-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile),
-      });
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 20000);
+
+      let response: Response;
+      try {
+        response = await fetch('/api/generate-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profile),
+          signal: abortController.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errorBody = (await response.json()) as { error?: string };
@@ -67,7 +76,10 @@ export default function HomePage(): React.ReactElement {
         resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      let message = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+        message = 'The plan generation took longer than expected. Please check your connection and try again.';
+      }
       setState({ status: 'error', plan: null, errorMessage: message });
     }
   }, []);

@@ -482,75 +482,97 @@ export async function generateAirQualityPlan(
   environmentalSnapshot?: EnvironmentalSnapshot,
   ventilationAnalysis?: FullVentilationAnalysis
 ): Promise<AiResponse> {
-  const genAI = getGenAI();
-  const prompt = buildUserPrompt(profile, environmentalSnapshot, ventilationAnalysis);
-  const systemInstruction = buildSystemInstruction();
-
-  // Primary model with fast, high-availability fallback
-  const candidateModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite'];
-  let rawJsonText = '';
-  let lastError: Error | null = null;
-
-  for (const model of candidateModels) {
+  try {
     if (signal?.aborted) {
-      throw new Error('Operation aborted due to timeout.');
+      console.warn('[gemini.ts] Signal already aborted; deploying deterministic fallback plan.');
+      return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
     }
 
-    try {
-      const response = await genAI.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: aiResponseJsonSchema,
-          temperature: 0.6,
-          maxOutputTokens: 4096,
-        },
-      });
+    const genAI = getGenAI();
+    const prompt = buildUserPrompt(profile, environmentalSnapshot, ventilationAnalysis);
+    const systemInstruction = buildSystemInstruction();
 
-      if (response.text && response.text.trim() !== '') {
-        rawJsonText = response.text;
+    // Primary model with fast fallback
+    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+    let rawJsonText = '';
+    let lastError: Error | null = null;
+
+    for (const model of candidateModels) {
+      if (signal?.aborted) {
         break;
       }
-    } catch (err) {
-      if (signal?.aborted) {
-        throw new Error('Operation aborted due to timeout.');
+
+      try {
+        // Race each model with a strict 7-second cutoff so we never hang
+        const modelTimeoutController = new AbortController();
+        const modelTimer = setTimeout(() => modelTimeoutController.abort(), 7000);
+
+        const responsePromise = genAI.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: aiResponseJsonSchema,
+            temperature: 0.3,
+            maxOutputTokens: 2048,
+          },
+        });
+
+        const abortPromise = new Promise<never>((_, reject) => {
+          modelTimeoutController.signal.addEventListener('abort', () =>
+            reject(new Error(`Model ${model} timed out after 7000ms.`))
+          );
+          signal?.addEventListener('abort', () =>
+            reject(new Error('Parent operation aborted.'))
+          );
+        });
+
+        let response;
+        try {
+          response = await Promise.race([responsePromise, abortPromise]);
+        } finally {
+          clearTimeout(modelTimer);
+        }
+
+        if (response?.text && response.text.trim() !== '') {
+          rawJsonText = response.text;
+          break;
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`[gemini.ts] Attempt with model ${model} failed, trying next candidate:`, lastError.message);
       }
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[gemini.ts] Attempt with model ${model} failed, trying next candidate:`, lastError.message);
     }
-  }
 
-  if (signal?.aborted) {
-    console.warn('[gemini.ts] Timeout encountered; deploying deterministic fallback plan.');
+    if (!rawJsonText || rawJsonText.trim() === '') {
+      console.warn(
+        `[gemini.ts] Gemini API unavailable (${lastError?.message ?? 'no response'}); deploying deterministic fallback plan.`
+      );
+      return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
+    }
+
+    let parsedData: unknown;
+    try {
+      parsedData = JSON.parse(rawJsonText);
+    } catch {
+      console.warn('[gemini.ts] JSON parsing failed; deploying deterministic fallback plan.');
+      return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
+    }
+
+    // Final runtime barrier validation via Zod
+    const validationResult = AiResponseSchema.safeParse(parsedData);
+
+    if (!validationResult.success) {
+      console.warn('[gemini.ts] Schema validation failed on LLM response; deploying deterministic fallback plan.');
+      return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
+    }
+
+    return validationResult.data;
+  } catch (fatalErr) {
+    console.warn('[gemini.ts] Unexpected exception in generateAirQualityPlan; deploying deterministic fallback plan:', fatalErr);
     return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
-
-  if (!rawJsonText || rawJsonText.trim() === '') {
-    console.warn(
-      `[gemini.ts] Gemini API unavailable (${lastError?.message ?? 'no response'}); deploying deterministic fallback plan.`
-    );
-    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
-  }
-
-  let parsedData: unknown;
-  try {
-    parsedData = JSON.parse(rawJsonText);
-  } catch {
-    console.warn('[gemini.ts] JSON parsing failed; deploying deterministic fallback plan.');
-    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
-  }
-
-  // Final runtime barrier validation via Zod
-  const validationResult = AiResponseSchema.safeParse(parsedData);
-
-  if (!validationResult.success) {
-    console.warn('[gemini.ts] Schema validation failed on LLM response; deploying deterministic fallback plan.');
-    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
-  }
-
-  return validationResult.data;
 }
 
 /**
