@@ -15,6 +15,10 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { UserProfileSchema } from '@/lib/schemas';
 import { generateAirQualityPlan } from '@/lib/gemini';
+import { fetchEnvironmentalSnapshot } from '@/lib/environmental-service.ts';
+import { analyze24HourVentilation } from '@/lib/ventilation-engine.ts';
+import { getGrapRegulation } from '@/lib/grap-regulations.ts';
+import { getEmergencyDirectory } from '@/lib/emergency-directory.ts';
 import type { AiResponse } from '@/lib/types';
 
 /** Maximum duration for Vercel serverless functions in seconds. */
@@ -120,16 +124,52 @@ export async function POST(
     );
   }
 
-  // 3. Execution Guardrail: Strict try / catch / finally block with Timeout Protection
+  // 3. Execution Guardrail: Strict try / catch / finally block with Environmental Grounding & Timeout Protection
   let plan: AiResponse | null = null;
   let processingError: Error | null = null;
   let isTimedOut = false;
 
   try {
+    const environmentalSnapshot = await fetchEnvironmentalSnapshot(validationResult.data.city);
+    const ventilationAnalysis = analyze24HourVentilation(environmentalSnapshot.hourlyForecast);
+
     plan = await withTimeout<AiResponse>(
-      (signal) => generateAirQualityPlan(validationResult.data, signal),
+      (signal) =>
+        generateAirQualityPlan(
+          validationResult.data,
+          signal,
+          environmentalSnapshot,
+          ventilationAnalysis
+        ),
       API_TIMEOUT_MS
     );
+
+    if (plan) {
+      if (environmentalSnapshot) {
+        plan.environmentalData = environmentalSnapshot as unknown as Record<string, unknown>;
+        if (environmentalSnapshot.cpcbResult.prominentPollutant) {
+          plan.prominentPollutant = environmentalSnapshot.cpcbResult.prominentPollutant;
+        }
+
+        // Synchronize safe ventilation window with authoritative scientific calculation
+        plan.safeVentilationWindow = {
+          timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
+          expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
+          recommendation: ventilationAnalysis.primaryWindow.recommendation,
+          isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
+          status: ventilationAnalysis.primaryWindow.status,
+          confidence: ventilationAnalysis.primaryWindow.confidence,
+          scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
+          contiguousIntervals: ventilationAnalysis.contiguousIntervals as unknown as Array<Record<string, unknown>>,
+          indoorCo2Advice: ventilationAnalysis.indoorCo2Guidance as unknown as Record<string, unknown>,
+        };
+      }
+
+      // Synchronize CAQM GRAP regulation with current calculated AQI
+      plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
+      // Synchronize emergency hospital directory matched to user's location
+      plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
+    }
   } catch (err: unknown) {
     if (err instanceof Error) {
       processingError = err;

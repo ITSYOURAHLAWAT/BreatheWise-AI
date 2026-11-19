@@ -17,7 +17,19 @@ import { getAqiConfig } from '@/lib/aqi-utils';
 import type { HourlyForecastProps, HourlyForecastItem } from '@/lib/types';
 
 /**
- * Maps CPCB AQI to a ventilation recommendation state.
+ * Maps CPCB AQI value to estimated PM2.5 concentration using official CPCB piecewise breakpoints.
+ */
+function estimatePm25FromAqi(aqi: number): number {
+  if (aqi <= 50) return Math.round((aqi / 50) * 30);
+  if (aqi <= 100) return Math.round(30 + ((aqi - 50) / 50) * 30);
+  if (aqi <= 200) return Math.round(60 + ((aqi - 100) / 100) * 30);
+  if (aqi <= 300) return Math.round(90 + ((aqi - 200) / 100) * 30);
+  if (aqi <= 400) return Math.round(120 + ((aqi - 300) / 100) * 130);
+  return Math.round(250 + ((Math.min(500, aqi) - 400) / 100) * 150);
+}
+
+/**
+ * Maps CPCB AQI to a ventilation recommendation state aligned with the scientific engine.
  */
 function getHourState(aqi: number): {
   status: 'safe' | 'caution' | 'unsafe';
@@ -25,7 +37,7 @@ function getHourState(aqi: number): {
   badgeClass: string;
   dotClass: string;
 } {
-  if (aqi <= 200) {
+  if (aqi <= 100) {
     return {
       status: 'safe',
       label: 'Recommended',
@@ -33,7 +45,7 @@ function getHourState(aqi: number): {
       dotClass: 'bg-emerald-500',
     };
   }
-  if (aqi <= 350) {
+  if (aqi <= 250) {
     return {
       status: 'caution',
       label: 'Caution / Brief',
@@ -151,7 +163,7 @@ export function HourlyForecast({ forecast }: HourlyForecastProps): React.ReactEl
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-white border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs">
                 <Activity size={13} className="text-teal-600" />
-                Est. PM2.5: ~{Math.round((activeItem.aqiValue / 500) * 280)} µg/m³
+                Est. PM2.5: ~{estimatePm25FromAqi(activeItem.aqiValue)} µg/m³
               </span>
             </div>
           </div>

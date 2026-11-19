@@ -15,7 +15,7 @@
 'use client';
 
 import React, { useRef, useId, useCallback } from 'react';
-import { MapPin, Heart, Activity, Car, Sparkles } from 'lucide-react';
+import { MapPin, Heart, Activity, Car, Sparkles, Languages } from 'lucide-react';
 import { UserProfileSchema } from '@/lib/schemas';
 import type { ProfileFormProps, UserProfile } from '@/lib/types';
 
@@ -133,6 +133,7 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
         hasElderly: data.get('hasElderly') === 'true',
         commuteMode: (data.get('commuteMode') as string | null) ?? '',
         additionalContext: (data.get('additionalContext') as string | null) || undefined,
+        language: (data.get('language') as 'en' | 'hi' | null) ?? 'en',
       };
 
       const result = UserProfileSchema.safeParse(rawProfile);
@@ -194,6 +195,34 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
             {fieldErrors.city}
           </p>
         )}
+
+        {/* Quick Delhi NCR Hotspots */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <span className="text-[11px] font-semibold text-sky-800">Delhi-NCR Hotspots:</span>
+          {[
+            'Anand Vihar, New Delhi',
+            'Jahangirpuri, Delhi',
+            'RK Puram, New Delhi',
+            'Rohini, Delhi',
+            'Sector 62, Noida',
+            'Cyber City, Gurugram',
+          ].map((spot) => (
+            <button
+              key={spot}
+              type="button"
+              onClick={() => {
+                const input = document.getElementById(`${baseId}-city`) as HTMLInputElement | null;
+                if (input) {
+                  input.value = spot;
+                  input.focus();
+                }
+              }}
+              className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-800 hover:bg-sky-100 transition-colors shadow-2xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+            >
+              {spot.split(',')[0]}
+            </button>
+          ))}
+        </div>
       </FormField>
 
       {/* ── Health Vulnerabilities ── */}
@@ -325,6 +354,35 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
           className="w-full resize-none rounded-lg border border-sky-200 bg-white px-4 py-2.5 text-sm text-sky-900 placeholder-sky-400 outline-none transition-colors hover:border-sky-300 focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
         />
       </FormField>
+
+      {/* ── Language Preference ── */}
+      <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3.5">
+        <label className="text-xs font-bold uppercase tracking-wider text-sky-900 flex items-center gap-1.5 mb-2">
+          <Languages size={15} className="text-sky-600" />
+          <span>Plan Advisory Language</span>
+        </label>
+        <div className="flex items-center gap-4">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
+            <input
+              type="radio"
+              name="language"
+              value="en"
+              defaultChecked
+              className="text-sky-600 focus:ring-sky-500"
+            />
+            <span>English (Default)</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
+            <input
+              type="radio"
+              name="language"
+              value="hi"
+              className="text-sky-600 focus:ring-sky-500"
+            />
+            <span>हिंदी (Hindi)</span>
+          </label>
+        </div>
+      </div>
 
       {/* ── Submit ── */}
       <button

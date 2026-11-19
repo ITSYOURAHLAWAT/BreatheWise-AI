@@ -69,12 +69,30 @@ export function AirQualityCard({
   alertMessage,
   summaryHeadline,
   city,
+  environmentalSnapshot,
+  prominentPollutant,
 }: AirQualityCardProps): React.ReactElement {
   const config = getAqiConfig(aqiCategory);
   const isEmergency = isEmergencyLevel(aqiCategory);
-  const pm25 = estimatePm25(aqiValue);
+
+  // Use authoritative modeled pollutant value if available, else standard CPCB estimate
+  const isEnvAvailable = environmentalSnapshot?.status === 'available';
+  const pm25 = isEnvAvailable && environmentalSnapshot.currentPollutants.pm25 > 0
+    ? environmentalSnapshot.currentPollutants.pm25
+    : estimatePm25(aqiValue);
+
+  const pm10 = isEnvAvailable && environmentalSnapshot.currentPollutants.pm10 > 0
+    ? environmentalSnapshot.currentPollutants.pm10
+    : null;
+
+  const prominent = prominentPollutant ?? environmentalSnapshot?.cpcbResult.prominentPollutant ?? 'pm25';
+
   const pct = Math.min(100, Math.max(0, (aqiValue / 500) * 100));
   const healthGuidance = getCpcbHealthImpact(aqiCategory);
+
+  const sourceLabel = isEnvAvailable
+    ? 'Open-Meteo (Copernicus CAMS)'
+    : 'CPCB Deterministic Model';
 
   return (
     <article
@@ -142,22 +160,25 @@ export function AirQualityCard({
 
             <div className="hidden sm:block h-20 w-px bg-slate-300/60" aria-hidden="true" />
 
-            {/* Environmental indicators */}
+            {/* Environmental indicators & data transparency */}
             <div className="space-y-2 text-xs">
               <div className="flex items-center gap-2">
                 <Activity size={14} className="text-slate-500" aria-hidden="true" />
-                <span className="text-slate-600 font-medium">Est. PM2.5:</span>
+                <span className="text-slate-600 font-medium">PM2.5:</span>
                 <span className="font-bold text-slate-900">{pm25} µg/m³</span>
+                {pm10 !== null && (
+                  <span className="text-[10px] text-slate-500">(PM10: {pm10} µg/m³)</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Database size={14} className="text-slate-500" aria-hidden="true" />
-                <span className="text-slate-600 font-medium">Standard:</span>
-                <span className="font-semibold text-slate-800">CPCB India (NAAQM)</span>
+                <span className="text-slate-600 font-medium">Source:</span>
+                <span className="font-semibold text-slate-800">{sourceLabel}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Clock size={14} className="text-slate-500" aria-hidden="true" />
-                <span className="text-slate-600 font-medium">Cadence:</span>
-                <span className="font-semibold text-slate-800">Live AI Synthesis</span>
+                <span className="text-slate-600 font-medium">Prominent:</span>
+                <span className="font-bold text-teal-800 uppercase">{prominent}</span>
               </div>
             </div>
           </div>

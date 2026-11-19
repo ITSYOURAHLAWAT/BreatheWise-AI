@@ -93,6 +93,8 @@ export const UserProfileSchema = z.object({
     .string()
     .max(500, 'Additional context must be under 500 characters.')
     .optional(),
+
+  language: z.enum(['en', 'hi']).optional(),
 });
 
 /** Inferred TypeScript type from `UserProfileSchema`. */
@@ -186,6 +188,16 @@ export const SafeVentilationWindowSchema = z.object({
   recommendation: z.string().min(1),
   /** Whether today's overall pollution is too dangerous to open windows at all. */
   isSafeToVentilate: z.boolean(),
+  /** Scientific ventilation classification status. */
+  status: z.enum(['safe', 'caution', 'unsafe', 'insufficient_data']).optional(),
+  /** Confidence level of the meteorological dispersion assessment. */
+  confidence: z.enum(['high', 'medium', 'low']).optional(),
+  /** Grounded scientific explanation of atmospheric dynamics. */
+  scientificReasoning: z.string().optional(),
+  /** Contiguous intervals across the 24-hour cycle. */
+  contiguousIntervals: z.array(z.record(z.string(), z.unknown())).optional(),
+  /** Indoor CO2 displacement protocol vs particulate intrusion. */
+  indoorCo2Advice: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Inferred TypeScript type from `SafeVentilationWindowSchema`. */
@@ -207,6 +219,10 @@ export const AiResponseSchema = z.object({
   safeVentilationWindow: SafeVentilationWindowSchema,
   emergencyTips: z.array(z.string()).min(1),
   generatedAt: z.string().datetime(),
+  prominentPollutant: z.string().optional(),
+  environmentalData: z.record(z.string(), z.unknown()).optional(),
+  grapRegulation: z.record(z.string(), z.unknown()).optional(),
+  emergencyDirectory: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Inferred TypeScript type from `AiResponseSchema`. */

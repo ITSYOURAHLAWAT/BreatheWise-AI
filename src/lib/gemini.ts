@@ -18,9 +18,13 @@
 
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Schema } from '@google/genai';
-import { AiResponseSchema } from './schemas';
-import type { UserProfile, AiResponse, AqiCategory } from './types';
-import { aqiValueToCategory } from './aqi-utils';
+import { AiResponseSchema } from './schemas.ts';
+import type { UserProfile, AiResponse, AqiCategory } from './types.ts';
+import { aqiValueToCategory } from './aqi-utils.ts';
+import type { EnvironmentalSnapshot } from './environmental-service.ts';
+import type { FullVentilationAnalysis } from './ventilation-engine.ts';
+import { getGrapRegulation } from './grap-regulations.ts';
+import { getEmergencyDirectory } from './emergency-directory.ts';
 
 // ─── Privacy & Sanitization ──────────────────────────────────────────────────
 
@@ -326,10 +330,11 @@ Core Behavioral Mandates:
    - Identify the safest 2-3 hour window (typically 1:30 PM - 4:00 PM during maximum solar mixing) where families can briefly aerate homes (15-20 mins) without severe toxic intrusion.
    - If current AQI is in the upper severe band (AQI > 450), mark 'isSafeToVentilate' as false and instruct keeping windows sealed with HEPA purifiers running continuously.
 
-4. EXPANDED HEALTH VULNERABILITIES:
-   - "Bronchitis": Prescribe steam inhalation with saline, anti-inflammatory dietary tips (ginger, tulsi), and strict avoidance of morning outdoor cold-smog air.
-   - "Allergies / Sinusitis": Prescribe nasal saline irrigation (Neti pot with distilled water), barrier balms around nostrils, and N95 masks when stepping outdoors.
-   - "Immunocompromised": Mandate hospital-grade air filtration (True HEPA + Carbon), zero unmasked outdoor exposure above AQI 150, and HEPA vacuuming.
+4. EXPANDED HEALTH VULNERABILITIES & MEDICAL SAFETY BOUNDARIES:
+   - STRICT SAFETY MANDATE: You are an environmental advisor, NOT a medical doctor. Strictly refrain from prescribing medications or issuing medical diagnoses. Provide supportive, non-pharmacological, practical lifestyle guidance only.
+   - "Bronchitis": Recommend supportive measures such as warm saline steam inhalation, anti-inflammatory dietary hydration (ginger, tulsi), and strict avoidance of morning outdoor cold-smog air.
+   - "Allergies / Sinusitis": Recommend gentle saline nasal irrigation (Neti pot with distilled water), barrier balms around nostrils, and certified N95 respirators when stepping outdoors.
+   - "Immunocompromised": Emphasize hospital-grade indoor air filtration (True HEPA + Activated Carbon), zero unmasked outdoor exposure above AQI 150, and HEPA vacuuming.
    - Heighten protections for Asthma, COPD, Cardiac conditions, Pregnant women, Infants, and Elderly.
 
 5. HYPER-LOCAL INDIAN CONTEXT:
@@ -342,7 +347,12 @@ Core Behavioral Mandates:
    - Deliver at least 5 indoor hacks with realistic difficulty and cost grades.
    - Deliver exactly 4 quantified impact metrics with measurable values.
    - Deliver at least 4 critical emergency tips for severe air spikes.
-   - Ensure 'generatedAt' is a valid ISO-8601 UTC timestamp.`;
+   - Ensure 'generatedAt' is a valid ISO-8601 UTC timestamp.
+
+7. BILINGUAL LANGUAGE LOCALIZATION (ENGLISH & HINDI):
+   - When language is Hindi ('hi'), generate all user-facing narrative text (headline, alertMessage, routine titles and descriptions, indoor hack titles and descriptions, forecast notes, and emergency tips) in clear, compassionate, natural Hindi (हिंदी - Devanagari script).
+   - Keep technical terms (like N95, HEPA, PM2.5, SpO2) bilingual or parenthesized for clarity.
+   - All JSON schema keys MUST remain strictly in English as defined by the responseSchema.`;
 }
 
 /**
@@ -351,7 +361,11 @@ Core Behavioral Mandates:
  * @param profile - Validated `UserProfile` object.
  * @returns Formatted prompt string for Gemini.
  */
-function buildUserPrompt(profile: UserProfile): string {
+function buildUserPrompt(
+  profile: UserProfile,
+  environmentalSnapshot?: EnvironmentalSnapshot,
+  ventilationAnalysis?: FullVentilationAnalysis
+): string {
   const sanitizedLocation = sanitizeInput(profile.city);
   const sanitizedContext = profile.additionalContext
     ? sanitizeInput(profile.additionalContext)
@@ -369,6 +383,70 @@ function buildUserPrompt(profile: UserProfile): string {
     ? `\nAdditional family context (sanitized):\n${sanitizedContext}`
     : '';
 
+  let envTelemetryClause = '';
+  if (environmentalSnapshot && environmentalSnapshot.status === 'available') {
+    const c = environmentalSnapshot.currentPollutants;
+    const calc = environmentalSnapshot.cpcbResult;
+    const m = environmentalSnapshot.meteorology;
+
+    const hourlyLines = environmentalSnapshot.hourlyForecast
+      .slice(0, 8)
+      .map(
+        (h) =>
+          `* ${h.displayTime}: ${h.cpcbAqi ?? 'N/A'} AQI (${h.cpcbCategory ?? 'N/A'}, PM2.5: ${h.pm25} µg/m³, BLH: ${h.boundaryLayerHeightM ?? 'N/A'}m)`
+      )
+      .join('\n');
+
+    let ventilationClause = '';
+    if (ventilationAnalysis) {
+      ventilationClause = `
+- Authoritative Safe Ventilation Window (Scientific Dispersion Engine):
+  * Status: ${ventilationAnalysis.overallStatus.toUpperCase()} (Is Safe To Open: ${ventilationAnalysis.isSafeToVentilate ? 'YES' : 'NO / CAUTION ONLY'})
+  * Primary Recommended Window: "${ventilationAnalysis.primaryWindow.timeWindow}"
+  * Expected AQI / Particulate: "${ventilationAnalysis.primaryWindow.expectedAqi}"
+  * Protocol: "${ventilationAnalysis.primaryWindow.recommendation}"
+  * Scientific Reasoning: "${ventilationAnalysis.primaryWindow.scientificReasoning}"
+  * Indoor CO2 Guidance: "${ventilationAnalysis.indoorCo2Guidance.action}"
+`;
+    }
+
+    envTelemetryClause = `
+AUTHORITATIVE ENVIRONMENTAL TELEMETRY (Open-Meteo European Copernicus / ECMWF Model):
+- Resolved Micro-Location: ${environmentalSnapshot.location.name} (${environmentalSnapshot.location.region}, Lat: ${environmentalSnapshot.location.latitude.toFixed(4)}°N, Lon: ${environmentalSnapshot.location.longitude.toFixed(4)}°E)
+- Scientifically Calculated CPCB NAQI: ${calc.aqi ?? 'N/A'} (${calc.aqiCategory?.toUpperCase() ?? 'N/A'})
+- Prominent Pollutant: ${calc.prominentPollutant?.toUpperCase() ?? 'PM2.5'}
+- Valid Pollutants Monitored: ${calc.validPollutantsCount}
+- Pollutant Concentrations:
+  * PM2.5: ${c.pm25} µg/m³ (CPCB Sub-Index: ${calc.subIndices.pm25?.subIndex ?? 'N/A'})
+  * PM10: ${c.pm10} µg/m³ (CPCB Sub-Index: ${calc.subIndices.pm10?.subIndex ?? 'N/A'})
+  * NO2: ${c.no2} µg/m³ (CPCB Sub-Index: ${calc.subIndices.no2?.subIndex ?? 'N/A'})
+  * SO2: ${c.so2} µg/m³
+  * CO: ${c.coMgM3} mg/m³
+  * O3: ${c.o3} µg/m³
+- Meteorological Atmospheric Parameters:
+  * Surface Temperature: ${m.temperatureC}°C
+  * Relative Humidity: ${m.relativeHumidityPercent}%
+  * Wind Speed: ${m.windSpeedKmh} km/h (Direction: ${m.windDirectionDegrees}°)
+  * Atmospheric Boundary Layer Height (PBLH): ${m.boundaryLayerHeightM ?? 'N/A'} meters
+${ventilationClause}
+- Modeled 24-Hour Diurnal Forecast:
+${hourlyLines}
+
+CRITICAL CPCB ANCHORING & VENTILATION SYNCHRONIZATION REQUIREMENT:
+- Your output 'aqiValue' MUST strictly equal ${calc.aqi ?? 350}.
+- Your output 'aqiCategory' MUST strictly equal '${calc.aqiCategory ?? 'severe'}'.
+- Your output 'safeVentilationWindow' MUST match the authoritative parameters:
+  * timeWindow: "${ventilationAnalysis?.primaryWindow.timeWindow ?? 'No Safe Window'}"
+  * isSafeToVentilate: ${ventilationAnalysis?.isSafeToVentilate ?? false}
+- Ground all health recommendations in the prominent pollutant (${calc.prominentPollutant?.toUpperCase() ?? 'PM2.5'}) and the specific atmospheric boundary conditions above.
+`;
+  }
+
+  const languageClause =
+    profile.language === 'hi'
+      ? `\nLANGUAGE REQUIREMENT: Generate all user-facing narrative text (headline, alertMessage, routine titles and descriptions, indoor hack titles and descriptions, forecast notes, and emergency tips) in compassionate, natural, fluent Hindi (हिंदी - Devanagari script), retaining medical/technical terms with bilingual English equivalents where helpful. Keep JSON keys strictly in English as defined by the schema.`
+      : '';
+
   return `Create a complete Urban Air Quality Survival & Sustainability Plan for this Indian family strictly within the official Indian CPCB 6-band AQI scale (0-500, max Severe):
 
 Micro-Location & Demographics:
@@ -377,7 +455,7 @@ Micro-Location & Demographics:
 - Household Members: ${householdComposition}
 - Outdoor Activity Level: ${profile.activityLevel}
 - Commute Mode: ${profile.commuteMode}${contextClause}
-
+${envTelemetryClause}${languageClause}
 Generate a hyper-localized, 24-hour actionable plan following the structured output schema. Include the hourly diurnal AQI curve (0-500) and the Safe Ventilation Window for fresh air.`;
 }
 
@@ -393,15 +471,19 @@ Generate a hyper-localized, 24-hour actionable plan following the structured out
  *
  * @param profile - The validated user profile received from the client.
  * @param signal - Optional AbortSignal for timeout and cancellation propagation.
+ * @param environmentalSnapshot - Optional authoritative environmental snapshot.
+ * @param ventilationAnalysis - Optional scientific safe ventilation analysis.
  * @returns A promise resolving to a strictly typed, validated `AiResponse`.
  * @throws {Error} If the API key is absent, the AI call fails, times out, or the response breaks schema constraints.
  */
 export async function generateAirQualityPlan(
   profile: UserProfile,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  environmentalSnapshot?: EnvironmentalSnapshot,
+  ventilationAnalysis?: FullVentilationAnalysis
 ): Promise<AiResponse> {
   const genAI = getGenAI();
-  const prompt = buildUserPrompt(profile);
+  const prompt = buildUserPrompt(profile, environmentalSnapshot, ventilationAnalysis);
   const systemInstruction = buildSystemInstruction();
 
   // Primary model with fast, high-availability fallback
@@ -442,14 +524,14 @@ export async function generateAirQualityPlan(
 
   if (signal?.aborted) {
     console.warn('[gemini.ts] Timeout encountered; deploying deterministic fallback plan.');
-    return generateDeterministicFallbackPlan(profile);
+    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
 
   if (!rawJsonText || rawJsonText.trim() === '') {
     console.warn(
       `[gemini.ts] Gemini API unavailable (${lastError?.message ?? 'no response'}); deploying deterministic fallback plan.`
     );
-    return generateDeterministicFallbackPlan(profile);
+    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
 
   let parsedData: unknown;
@@ -457,7 +539,7 @@ export async function generateAirQualityPlan(
     parsedData = JSON.parse(rawJsonText);
   } catch {
     console.warn('[gemini.ts] JSON parsing failed; deploying deterministic fallback plan.');
-    return generateDeterministicFallbackPlan(profile);
+    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
 
   // Final runtime barrier validation via Zod
@@ -465,7 +547,7 @@ export async function generateAirQualityPlan(
 
   if (!validationResult.success) {
     console.warn('[gemini.ts] Schema validation failed on LLM response; deploying deterministic fallback plan.');
-    return generateDeterministicFallbackPlan(profile);
+    return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
 
   return validationResult.data;
@@ -479,43 +561,61 @@ export async function generateAirQualityPlan(
  * personalized health protections, and safe ventilation window calculations.
  *
  * @param profile - Validated user profile.
+ * @param environmentalSnapshot - Optional authoritative environmental snapshot.
+ * @param ventilationAnalysis - Optional scientific safe ventilation analysis.
  * @returns Fully validated `AiResponse` strictly satisfying `AiResponseSchema`.
  */
-export function generateDeterministicFallbackPlan(profile: UserProfile): AiResponse {
+export function generateDeterministicFallbackPlan(
+  profile: UserProfile,
+  environmentalSnapshot?: EnvironmentalSnapshot,
+  ventilationAnalysis?: FullVentilationAnalysis
+): AiResponse {
   const locLower = profile.city.toLowerCase();
 
   // Baseline AQI estimation based on micro-location & Indian geography
   let baseAqi = 285;
-  if (
-    locLower.includes('delhi') ||
-    locLower.includes('anand vihar') ||
-    locLower.includes('jahangirpuri') ||
-    locLower.includes('noida') ||
-    locLower.includes('ghaziabad') ||
-    locLower.includes('gurugram') ||
-    locLower.includes('patna')
-  ) {
-    baseAqi = 412; // CPCB Severe band
-  } else if (
-    locLower.includes('mumbai') ||
-    locLower.includes('bandra') ||
-    locLower.includes('kurla') ||
-    locLower.includes('chembur') ||
-    locLower.includes('kolkata')
-  ) {
-    baseAqi = 235; // CPCB Poor band
-  } else if (
-    locLower.includes('bengaluru') ||
-    locLower.includes('bangalore') ||
-    locLower.includes('chennai') ||
-    locLower.includes('hyderabad') ||
-    locLower.includes('pune')
-  ) {
-    baseAqi = 145; // CPCB Moderate band
-  }
+  let aqiCategory: AqiCategory = 'poor';
 
-  const category = aqiValueToCategory(baseAqi);
-  const aqiCategory: AqiCategory = category === 'Out of range / Exceptional' ? 'severe' : category;
+  if (
+    environmentalSnapshot &&
+    environmentalSnapshot.status === 'available' &&
+    typeof environmentalSnapshot.cpcbResult.aqi === 'number'
+  ) {
+    baseAqi = environmentalSnapshot.cpcbResult.aqi;
+    const cat = environmentalSnapshot.cpcbResult.aqiCategory;
+    aqiCategory = (cat === 'Out of range / Exceptional' ? 'severe' : cat) ?? 'severe';
+  } else {
+    if (
+      locLower.includes('delhi') ||
+      locLower.includes('anand vihar') ||
+      locLower.includes('jahangirpuri') ||
+      locLower.includes('noida') ||
+      locLower.includes('ghaziabad') ||
+      locLower.includes('gurugram') ||
+      locLower.includes('patna')
+    ) {
+      baseAqi = 412; // CPCB Severe band
+    } else if (
+      locLower.includes('mumbai') ||
+      locLower.includes('bandra') ||
+      locLower.includes('kurla') ||
+      locLower.includes('chembur') ||
+      locLower.includes('kolkata')
+    ) {
+      baseAqi = 235; // CPCB Poor band
+    } else if (
+      locLower.includes('bengaluru') ||
+      locLower.includes('bangalore') ||
+      locLower.includes('chennai') ||
+      locLower.includes('hyderabad') ||
+      locLower.includes('pune')
+    ) {
+      baseAqi = 145; // CPCB Moderate band
+    }
+
+    const category = aqiValueToCategory(baseAqi);
+    aqiCategory = category === 'Out of range / Exceptional' ? 'severe' : category;
+  }
 
   // Diurnal thermal inversion curve
   const morningPeak = Math.min(500, Math.round(baseAqi * 1.15));
@@ -685,29 +785,61 @@ export function generateDeterministicFallbackPlan(profile: UserProfile): AiRespo
     },
   ];
 
+  const isHindi = profile.language === 'hi';
+
   return {
     aqiCategory,
     aqiValue: baseAqi,
-    alertMessage: `Air quality in ${profile.city} is currently categorized as ${aqiCategory.toUpperCase()} under official CPCB standards. Follow high-protection protocols.`,
-    summaryHeadline: `24-Hour Winter Smog Survival & Clean Air Plan for ${profile.city}`,
+    alertMessage: isHindi
+      ? `${profile.city} में वायु गुणवत्ता CPCB मानकों के अनुसार ${aqiCategory.toUpperCase()} श्रेणी में है। सुरक्षा प्रोटोकॉल का पालन करें।`
+      : `Air quality in ${profile.city} is currently categorized as ${aqiCategory.toUpperCase()} under official CPCB standards. Follow high-protection protocols.`,
+    summaryHeadline: isHindi
+      ? `${profile.city} के लिए 24 घंटे का शीतकालीन स्मॉग सुरक्षा प्लान`
+      : `24-Hour Winter Smog Survival & Clean Air Plan for ${profile.city}`,
     lowEmissionRoutines: routines,
     indoorHacks,
     impactMetrics,
     hourlyForecast,
-    safeVentilationWindow: {
-      timeWindow: '2:00 PM - 4:00 PM',
-      expectedAqi: `Dips to ~${afternoonDip} AQI (Midday solar mixing)`,
-      recommendation: isSafe
-        ? 'Open cross-facing windows for 15-20 minutes to purge indoor CO2 and VOCs, then seal windows and run HEPA purifiers on turbo mode for 30 minutes.'
-        : 'Ambient air is too dangerous (>350 AQI). Keep all windows firmly sealed and operate indoor HEPA purifiers continuously on auto-circulation.',
-      isSafeToVentilate: isSafe,
-    },
-    emergencyTips: [
-      'Ensure every family member wears a certified N95 / FFP2 respirator when stepping outdoors; standard cloth masks do not filter fine PM2.5.',
-      'Seal window and door perimeters with weather stripping to stop toxic smog infiltration.',
-      'Check emergency inhalers and medications; keep emergency healthcare contacts on speed dial for vulnerable members.',
-      'Avoid burning incense, mosquito coils, or candles indoors, which exacerbate indoor PM2.5 concentrations.',
-    ],
+    safeVentilationWindow: ventilationAnalysis?.primaryWindow
+      ? {
+          timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
+          expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
+          recommendation: ventilationAnalysis.primaryWindow.recommendation,
+          isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
+          status: ventilationAnalysis.primaryWindow.status,
+          confidence: ventilationAnalysis.primaryWindow.confidence,
+          scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
+        }
+      : {
+          timeWindow: isSafe ? '2:00 PM – 4:00 PM' : 'No Safe Window Today',
+          expectedAqi: isSafe
+            ? `Dips to ~${afternoonDip} AQI (Midday solar mixing)`
+            : 'Dangerous ambient particulate concentrations across all 24 hours',
+          recommendation: isSafe
+            ? 'Open cross-facing windows for 10–15 minutes only to purge indoor CO2 and VOCs, then seal windows and run HEPA purifiers on turbo mode for 30 minutes.'
+            : 'Ambient air is too dangerous (>250 AQI). Keep all windows firmly sealed and operate indoor HEPA purifiers continuously on auto-circulation.',
+          isSafeToVentilate: isSafe,
+          status: isSafe ? ('caution' as const) : ('unsafe' as const),
+          confidence: 'medium' as const,
+          scientificReasoning: isSafe
+            ? 'Temporary vertical mixing provides a cautionary aeration window.'
+            : 'Surface thermal stagnation and heavy particulate accumulation prohibit safe window opening.',
+        },
+    emergencyTips: isHindi
+      ? [
+          'बाहर निकलते समय परिवार के प्रत्येक सदस्य के लिए प्रमाणित N95 / FFP2 मास्क सुनिश्चित करें; सामान्य कपड़े के मास्क सूक्ष्म PM2.5 को नहीं रोकते।',
+          'जहरीले स्मॉग के रिसाव को रोकने के लिए खिड़कियों और दरवाजों पर वेदर-स्ट्रिपिंग टेप या गीले तौलिये लगाएं।',
+          'इमरजेंसी इनहेलर और निर्धारित दवाएं तैयार रखें; आपातकालीन स्वास्थ्य संपर्कों को स्पीड डायल पर रखें।',
+          'घर के अंदर अगरबत्ती, धूपबत्ती, या मोमबत्तियां जलाने से पूरी तरह बचें, जिससे अंदरूनी PM2.5 बढ़ता है।',
+        ]
+      : [
+          'Ensure every family member wears a certified N95 / FFP2 respirator when stepping outdoors; standard cloth masks do not filter fine PM2.5.',
+          'Seal window and door perimeters with weather stripping to stop toxic smog infiltration.',
+          'Check emergency inhalers and medications; keep emergency healthcare contacts on speed dial for vulnerable members.',
+          'Avoid burning incense, mosquito coils, or candles indoors, which exacerbate indoor PM2.5 concentrations.',
+        ],
     generatedAt: new Date().toISOString(),
+    grapRegulation: getGrapRegulation(baseAqi) as unknown as Record<string, unknown>,
+    emergencyDirectory: getEmergencyDirectory(profile.city) as unknown as Record<string, unknown>,
   };
 }

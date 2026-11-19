@@ -15,7 +15,7 @@ import type {
   ImpactMetric,
   HourlyForecastItem,
   SafeVentilationWindow,
-} from './schemas';
+} from './schemas.ts';
 import type { z } from 'zod';
 
 // ─── Re-exports for convenience ───────────────────────────────────────────────
@@ -29,6 +29,43 @@ export type {
   HourlyForecastItem,
   SafeVentilationWindow,
 } from './schemas';
+
+import type {
+  MicroLocation,
+  DataSourceMetadata,
+  MeteorologicalSnapshot,
+  HourlyEnvironmentalPoint,
+  EnvironmentalSnapshot,
+} from './environmental-service.ts';
+
+export type {
+  CpcbPollutant,
+  CpcbBreakpoint,
+  RawPollutantConcentrations,
+  PollutantSubIndexResult,
+  CpcbCalculationResult,
+} from './cpcb-aqi.ts';
+
+export type {
+  HourlyVentilationStatus,
+  VentilationConfidence,
+  EvaluatedVentilationHour,
+  ContiguousVentilationInterval,
+  FullVentilationAnalysis,
+} from './ventilation-engine.ts';
+
+export type {
+  GrapStage,
+  GrapRegulationInfo,
+  GrapCitizenGuideline,
+} from './grap-regulations.ts';
+
+export type {
+  EmergencyHospital,
+  EmergencyHotline,
+  RedFlagSymptom,
+  EmergencyDirectoryResult,
+} from './emergency-directory.ts';
 
 // ─── AQI Utilities ───────────────────────────────────────────────────────────
 
@@ -88,12 +125,22 @@ export interface ProfileFormProps {
 /**
  * `AirQualityCardProps` — Props for the `AirQualityCard` component.
  */
+export type {
+  MicroLocation,
+  DataSourceMetadata,
+  MeteorologicalSnapshot,
+  HourlyEnvironmentalPoint,
+  EnvironmentalSnapshot,
+};
+
 export interface AirQualityCardProps {
   aqiValue: number;
   aqiCategory: AqiCategory;
   alertMessage: string;
   summaryHeadline: string;
   city: string;
+  environmentalSnapshot?: EnvironmentalSnapshot | undefined;
+  prominentPollutant?: string | undefined;
 }
 
 /**

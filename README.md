@@ -29,14 +29,18 @@
 ## ✨ Features
 
 - 🤖 **AI-Powered Plans** — Gemini Flash generates hyper-personalized air quality survival plans
+- 📊 **Authoritative CPCB NAQI Engine** — Exact piecewise breakpoint interpolation conforming to the official Indian Central Pollution Control Board standard with mandatory 3-pollutant sufficiency checks
+- 🛰️ **Atmospheric Model Telemetry** — Real-time European Copernicus / ECMWF CAMS atmospheric data via Open-Meteo with explicit provenance, location coordinates, and data freshness tracking
+- 🪟 **Scientific Safe Ventilation Engine** — Multi-parameter atmospheric dispersion analysis (PBLH, wind speed, RH, PM2.5) with uncertainty confidence ratings, 24-hour contiguous intervals, and indoor CO2 vs. aerosol infiltration trade-offs
+- ⚖️ **Statutory CAQM GRAP Regulation Integration** — Real-time Graded Response Action Plan (Stages I–IV) tracking with vehicular restrictions (BS-III Petrol/BS-IV Diesel bans), construction halt alerts, and school advisories
+- 🏥 **Delhi-NCR Emergency Pulmonology Directory** — Verified tertiary respiratory emergency centers (AIIMS, Safdarjung, VPCI, Medanta, etc.), 1-touch emergency dispatch hotlines (112, 102/108), and clinical red-flag respiratory triage guidelines
+- 🌐 **Bilingual Intelligence** — Full English & हिंदी (Hindi) plan generation support with translated technical terms
 - ⏱️ **24-Hour Diurnal AQI Forecast** — Simulates Indian winter thermal inversions across morning smog peaks and afternoon thermal mixing
-- 🪟 **Safe Ventilation Window** — Pinpoints the safest 2–3 hour window of the day to aerate homes without smog backflow
 - 🛡️ **Expanded Vulnerabilities** — Personalized protocols for Bronchitis, Severe Allergies / Sinusitis, and Immunocompromised conditions
-- 📍 **Indian Micro-Location Focus** — Contextual guidance tailored to urban micro-locations (e.g., Anand Vihar, Delhi; Bandra, Mumbai)
+- 📍 **Delhi-NCR Micro-Location Hotspots** — Quick-selector for known hot spots (Anand Vihar, Jahangirpuri, RK Puram, Rohini, Noida Sec-62, Cyber City Gurugram)
 - 💚 **Low-Emission Routines** — Timed daily actions to minimize pollution exposure
 - 🏠 **Indoor Hacks** — Cost-graded improvements to make your home a clean-air sanctuary
 - 📈 **Impact Metrics** — Quantified PM2.5 reduction and health benefit metrics
-- 🚨 **Emergency Protocol** — Critical actions for severe smog days
 - ♿ **WCAG AAA Compliant** — Semantic HTML, ARIA roles, `prefers-reduced-motion` support, keyboard navigation, skip links
 
 ---
@@ -53,26 +57,33 @@ src/
 │   ├── layout.tsx                # Root layout (font, metadata, body)
 │   └── page.tsx                  # Main page — state machine orchestrator
 ├── components/
-│   ├── AppHeader.tsx             # Sticky branding header + reset button
-│   ├── AirQualityCard.tsx        # Hero AQI status card
-│   ├── AqiBadge.tsx              # Colour-coded AQI category pill
-│   ├── EmergencyTips.tsx         # Critical actions list for severe days
-│   ├── ErrorBanner.tsx           # Dismissable error notification
-│   ├── HourlyForecast.tsx        # 24-Hour Diurnal AQI thermal curve strip
-│   ├── ImpactMetric.tsx          # Single quantified benefit tile
-│   ├── ImpactMetricsGrid.tsx     # 2×2/4-col grid of impact tiles
-│   ├── IndoorHacksList.tsx       # Grid of indoor improvement cards
-│   ├── LoadingSpinner.tsx        # Animated breathing-circle loader
-│   ├── PlanDashboard.tsx         # Full results layout assembler
-│   ├── ProfileForm.tsx           # Urban micro-location + lifestyle form
-│   ├── RoutineList.tsx           # Ordered list of daily routines
-│   ├── SectionHeader.tsx         # Reusable section h2 + subtitle
-│   └── VentilationWindowCard.tsx # Safe 2-3 hour window recommendation card
+│   ├── AppHeader.tsx                 # Sticky branding header + reset button
+│   ├── AirQualityCard.tsx            # Hero AQI status card + provenance attribution
+│   ├── AqiBadge.tsx                  # Colour-coded AQI category pill
+│   ├── EmergencyDirectorySection.tsx # Verified tertiary pulmonology centers & 112/102 hotlines
+│   ├── EmergencyTips.tsx             # Critical actions list for severe days
+│   ├── ErrorBanner.tsx               # Dismissable error notification
+│   ├── GrapAlertCard.tsx             # Statutory CAQM GRAP restrictions & vehicle bans
+│   ├── HourlyForecast.tsx            # 24-Hour Diurnal AQI thermal curve strip
+│   ├── ImpactMetric.tsx              # Single quantified benefit tile
+│   ├── ImpactMetricsGrid.tsx         # 2×2/4-col grid of impact tiles
+│   ├── IndoorHacksList.tsx           # Grid of indoor improvement cards
+│   ├── LoadingSpinner.tsx            # Animated breathing-circle loader
+│   ├── PlanDashboard.tsx             # Full results layout assembler
+│   ├── ProfileForm.tsx               # Micro-location form + hotspot chips + Hindi toggle
+│   ├── RoutineList.tsx               # Ordered list of daily routines
+│   ├── SectionHeader.tsx             # Reusable section h2 + subtitle
+│   └── VentilationWindowCard.tsx     # Multi-interval ventilation timeline & indoor CO2 guidance
 └── lib/
-    ├── aqi-utils.ts              # Pure AQI colour/label utilities (CPCB 6-band, deterministic)
-    ├── gemini.ts                 # Gemini API integration + deterministic fallback (server-only)
-    ├── schemas.ts                # Zod schemas (source of truth for all types)
-    └── types.ts                  # TypeScript interfaces + re-exports
+    ├── aqi-utils.ts                  # Pure AQI colour/label utilities (CPCB 6-band, deterministic)
+    ├── cpcb-aqi.ts                   # Official CPCB NAQI formula & 3-pollutant sufficiency engine
+    ├── emergency-directory.ts        # Delhi-NCR emergency hospital registry & clinical triage
+    ├── environmental-service.ts      # Open-Meteo European Copernicus / ECMWF CAMS service
+    ├── gemini.ts                     # Gemini API integration + deterministic fallback (server-only)
+    ├── grap-regulations.ts           # Statutory CAQM GRAP Stage I–IV regulation engine
+    ├── schemas.ts                    # Zod schemas (source of truth for all types)
+    ├── types.ts                      # TypeScript interfaces + re-exports
+    └── ventilation-engine.ts         # Multi-parameter atmospheric dispersion & safe ventilation model
 ```
 
 ---
@@ -208,6 +219,7 @@ The **Safe Ventilation Window** component surfaces the specific 2–3 hour slot 
 | `npm run start` | Start production server locally |
 | `npm run type-check` | Run `tsc --noEmit` — must exit 0 |
 | `npm run lint` | Run ESLint with zero-warning policy |
+| `npm test` | Run complete Node test runner suite (36 unit & integration tests) |
 
 ---
 

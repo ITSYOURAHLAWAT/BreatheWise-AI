@@ -13,7 +13,7 @@
  *  - > 500:   Out of range / Exceptional
  */
 
-import type { AqiCategory, AqiDisplayConfig } from './types';
+import type { AqiCategory, AqiDisplayConfig } from './types.ts';
 
 /**
  * `AQI_DISPLAY_CONFIG` — Maps each CPCB AQI category to its visual presentation.

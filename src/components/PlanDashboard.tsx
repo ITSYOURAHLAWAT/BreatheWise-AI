@@ -35,9 +35,18 @@ import { ImpactMetricsGrid } from './ImpactMetricsGrid';
 import { RoutineList } from './RoutineList';
 import { IndoorHacksList } from './IndoorHacksList';
 import { EmergencyTips } from './EmergencyTips';
+import { GrapAlertCard } from './GrapAlertCard';
+import { EmergencyDirectorySection } from './EmergencyDirectorySection';
 import { SectionHeader } from './SectionHeader';
 import { isEmergencyLevel, getAqiConfig } from '@/lib/aqi-utils';
-import type { AiResponse } from '@/lib/types';
+import { getGrapRegulation } from '@/lib/grap-regulations';
+import { getEmergencyDirectory } from '@/lib/emergency-directory';
+import type {
+  AiResponse,
+  EnvironmentalSnapshot,
+  GrapRegulationInfo,
+  EmergencyDirectoryResult,
+} from '@/lib/types';
 
 /** Props for `PlanDashboard`. */
 interface PlanDashboardProps {
@@ -56,6 +65,14 @@ interface PlanDashboardProps {
 export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactElement {
   const isEmergency = isEmergencyLevel(plan.aqiCategory);
   const aqiConfig = getAqiConfig(plan.aqiCategory);
+
+  const grapRegulation: GrapRegulationInfo =
+    (plan.grapRegulation as unknown as GrapRegulationInfo) ??
+    getGrapRegulation(plan.aqiValue);
+
+  const emergencyDirectory: EmergencyDirectoryResult =
+    (plan.emergencyDirectory as unknown as EmergencyDirectoryResult) ??
+    getEmergencyDirectory(city);
 
   /** Formats the generatedAt timestamp for display. */
   const formattedTime = new Intl.DateTimeFormat('en-IN', {
@@ -139,7 +156,14 @@ export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactEl
         alertMessage={plan.alertMessage}
         summaryHeadline={plan.summaryHeadline}
         city={city}
+        environmentalSnapshot={plan.environmentalData as unknown as EnvironmentalSnapshot | undefined}
+        prominentPollutant={plan.prominentPollutant}
       />
+
+      {/* ── Statutory CAQM GRAP Regulation Banner ── */}
+      <section aria-label="CAQM GRAP regulations and statutory restrictions">
+        <GrapAlertCard regulation={grapRegulation} />
+      </section>
 
       {/* ── Safe Ventilation Window Feature ── */}
       <section aria-label="Safe ventilation window">
@@ -161,15 +185,16 @@ export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactEl
         <ImpactMetricsGrid metrics={plan.impactMetrics} />
       </section>
 
-      {/* ── Emergency Tips (conditional high placement on severe days) ── */}
+      {/* ── Emergency Tips & Medical Directory (conditional high placement on severe days) ── */}
       {isEmergency && (
-        <section aria-label="Emergency smog protocol">
+        <section aria-label="Emergency smog protocol and hospital directory" className="space-y-6">
           <SectionHeader
             title="⚠️ Emergency Smog Protocol"
-            subtitle="Critical actions required for today's severe air quality level"
+            subtitle="Critical actions and emergency healthcare infrastructure for severe air quality"
             icon={<ShieldAlert size={20} />}
           />
           <EmergencyTips tips={plan.emergencyTips} />
+          <EmergencyDirectorySection directory={emergencyDirectory} city={city} />
         </section>
       )}
 
@@ -193,15 +218,16 @@ export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactEl
         <IndoorHacksList hacks={plan.indoorHacks} />
       </section>
 
-      {/* ── Emergency Tips (secondary placement on moderate/poor days) ── */}
+      {/* ── Emergency Tips & Medical Directory (secondary placement on moderate/poor days) ── */}
       {!isEmergency && (
-        <section aria-label="Emergency smog tips for severe days" className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">
+        <section aria-label="Emergency smog tips and hospital directory" className="space-y-6">
           <SectionHeader
-            title="Emergency Tips for Severe Days"
-            subtitle="Keep these protocols ready if AQI deteriorates"
+            title="Emergency Protocol & Pulmonology Directory"
+            subtitle="Verified emergency infrastructure ready if air quality deteriorates"
             icon={<ShieldAlert size={20} />}
           />
           <EmergencyTips tips={plan.emergencyTips} />
+          <EmergencyDirectorySection directory={emergencyDirectory} city={city} />
         </section>
       )}
 
