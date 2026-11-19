@@ -30,9 +30,13 @@ export function EmergencyDirectorySection({
 }: EmergencyDirectorySectionProps): React.ReactElement {
   const [showAllHospitals, setShowAllHospitals] = useState(false);
 
+  const regionalHospitals = directory?.regionalHospitals ?? [];
+  const hotlines = directory?.hotlines ?? [];
+  const redFlagSymptoms = directory?.redFlagSymptoms ?? [];
+
   const displayedHospitals = showAllHospitals
-    ? directory.regionalHospitals
-    : directory.regionalHospitals.slice(0, 4);
+    ? regionalHospitals
+    : regionalHospitals.slice(0, 4);
 
   return (
     <section
@@ -71,7 +75,7 @@ export function EmergencyDirectorySection({
           <span>One-Touch Emergency Dispatch Hotlines</span>
         </h4>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {directory.hotlines.map((hotline, idx) => (
+          {hotlines.map((hotline, idx) => (
             <a
               key={idx}
               href={`tel:${hotline.number.split('/')[0]?.trim()}`}
@@ -114,7 +118,7 @@ export function EmergencyDirectorySection({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {directory.redFlagSymptoms.map((symptom, idx) => (
+          {redFlagSymptoms.map((symptom, idx) => (
             <div
               key={idx}
               className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col justify-between"
@@ -217,7 +221,7 @@ export function EmergencyDirectorySection({
           ))}
         </div>
 
-        {directory.regionalHospitals.length > 4 && (
+        {regionalHospitals.length > 4 && (
           <div className="mt-3 text-center">
             <button
               onClick={() => setShowAllHospitals((prev) => !prev)}
@@ -232,7 +236,7 @@ export function EmergencyDirectorySection({
               ) : (
                 <>
                   <ChevronDown size={14} />
-                  <span>View All {directory.regionalHospitals.length} Verified Hospitals</span>
+                  <span>View All {regionalHospitals.length} Verified Hospitals</span>
                 </>
               )}
             </button>

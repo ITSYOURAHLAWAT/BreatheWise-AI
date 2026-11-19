@@ -26,8 +26,14 @@ interface GrapAlertCardProps {
 export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const isSevere = regulation.stage === 'STAGE_3' || regulation.stage === 'STAGE_4';
-  const isStageActive = regulation.stage !== 'NONE';
+  const isSevere = regulation?.stage === 'STAGE_3' || regulation?.stage === 'STAGE_4';
+  const isStageActive = regulation?.stage !== 'NONE';
+
+  const doGuidelines = regulation?.citizenGuidelines?.do ?? [];
+  const dontGuidelines = regulation?.citizenGuidelines?.dont ?? [];
+  const vehicleRestrictions = regulation?.vehicleRestrictions ?? [];
+  const constructionRestrictions = regulation?.constructionRestrictions ?? [];
+  const totalGuidelines = doGuidelines.length + dontGuidelines.length;
 
   return (
     <article
@@ -99,7 +105,7 @@ export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactEl
               <span>Vehicular Ban</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              {regulation.vehicleRestrictions[0] ?? 'Standard traffic rules apply.'}
+              {vehicleRestrictions[0] ?? 'Standard traffic rules apply.'}
             </p>
           </div>
           {regulation.stage === 'STAGE_3' || regulation.stage === 'STAGE_4' ? (
@@ -117,7 +123,7 @@ export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactEl
               <span>Construction & Dust</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              {regulation.constructionRestrictions[0] ?? 'Standard dust control norms.'}
+              {constructionRestrictions[0] ?? 'Standard dust control norms.'}
             </p>
           </div>
           {isSevere ? (
@@ -172,7 +178,7 @@ export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactEl
           <span className="flex items-center gap-2">
             <span>Official Citizen Directives (Do&apos;s &amp; Don&apos;ts for Delhi-NCR Residents)</span>
             <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-              {regulation.citizenGuidelines.do.length + regulation.citizenGuidelines.dont.length} Guidelines
+              {totalGuidelines} Guidelines
             </span>
           </span>
           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -187,7 +193,7 @@ export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactEl
                 <span>Statutory &amp; Health Do&apos;s</span>
               </h4>
               <ul className="space-y-2 text-xs text-emerald-900 leading-relaxed">
-                {regulation.citizenGuidelines.do.map((item, idx) => (
+                {doGuidelines.map((item, idx) => (
                   <li key={idx} className="flex items-start gap-2">
                     <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" />
                     <span>{item}</span>
@@ -203,7 +209,7 @@ export function GrapAlertCard({ regulation }: GrapAlertCardProps): React.ReactEl
                 <span>Strict Prohibitions (Don&apos;ts)</span>
               </h4>
               <ul className="space-y-2 text-xs text-rose-900 leading-relaxed">
-                {regulation.citizenGuidelines.dont.map((item, idx) => (
+                {dontGuidelines.map((item, idx) => (
                   <li key={idx} className="flex items-start gap-2">
                     <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-600" />
                     <span>{item}</span>

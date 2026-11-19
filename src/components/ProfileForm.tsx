@@ -125,13 +125,16 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
 
       const data = new FormData(form);
 
+      const vulnerabilitiesToSubmit =
+        selectedVulnerabilities.length > 0 ? selectedVulnerabilities : ['none'];
+
       const rawProfile = {
         city: (data.get('city') as string | null) ?? '',
-        healthVulnerabilities: selectedVulnerabilities,
-        activityLevel: (data.get('activityLevel') as string | null) ?? '',
+        healthVulnerabilities: vulnerabilitiesToSubmit,
+        activityLevel: (data.get('activityLevel') as string | null) ?? 'lightly_active',
         hasChildren: data.get('hasChildren') === 'true',
         hasElderly: data.get('hasElderly') === 'true',
-        commuteMode: (data.get('commuteMode') as string | null) ?? '',
+        commuteMode: (data.get('commuteMode') as string | null) ?? 'public_transport',
         additionalContext: (data.get('additionalContext') as string | null) || undefined,
         language: (data.get('language') as 'en' | 'hi' | null) ?? 'en',
       };
@@ -214,6 +217,11 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
                 const input = document.getElementById(`${baseId}-city`) as HTMLInputElement | null;
                 if (input) {
                   input.value = spot;
+                  setFieldErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.city;
+                    return next;
+                  });
                   input.focus();
                 }
               }}
