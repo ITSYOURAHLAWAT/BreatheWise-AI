@@ -185,16 +185,63 @@ export interface CpcbCalculationResult {
  * @param concentration - Numerical concentration (µg/m³, except CO in mg/m³).
  * @returns {@link PollutantSubIndexResult} with calculated sub-index and validity status.
  */
-export function calculatePollutantSubIndex(
-  pollutant: CpcbPollutant,
-  concentration: number
-): PollutantSubIndexResult {
-  if (
+/**
+ * Checks whether an incoming concentration value is valid for CPCB calculations.
+ *
+ * @param concentration - Numerical concentration reading.
+ * @returns `true` if concentration is negative, NaN, non-finite, or non-numeric.
+ */
+function isInvalidConcentration(concentration: unknown): boolean {
+  return (
     typeof concentration !== 'number' ||
     Number.isNaN(concentration) ||
     !Number.isFinite(concentration) ||
     concentration < 0
-  ) {
+  );
+}
+
+/**
+ * Linearly interpolates sub-index from concentration and matching breakpoint.
+ *
+ * Formula: I = I_lo + ((I_hi - I_lo) / (B_hi - B_lo)) * (C - B_lo)
+ *
+ * @param bp - Matching CPCB breakpoint range.
+ * @param concentration - Pollutant concentration.
+ * @returns Clamped sub-index between 0 and 500.
+ */
+function interpolateSubIndex(bp: CpcbBreakpoint, concentration: number): number {
+  const interpolated = bp.iLo + ((bp.iHi - bp.iLo) / (bp.bHi - bp.bLo)) * (concentration - bp.bLo);
+  return Math.min(500, Math.max(0, Math.round(interpolated)));
+}
+
+/**
+ * Finds the matching breakpoint interval for a given concentration.
+ *
+ * @param breakpoints - Array of CPCB breakpoints for the pollutant.
+ * @param concentration - Pollutant concentration.
+ * @returns The matching breakpoint or `undefined` if outside defined intervals.
+ */
+function findBreakpointForConcentration(
+  breakpoints: readonly CpcbBreakpoint[],
+  concentration: number
+): CpcbBreakpoint | undefined {
+  return breakpoints.find((bp) => concentration >= bp.bLo && concentration <= bp.bHi);
+}
+
+/**
+ * Calculates the individual pollutant sub-index for a single pollutant parameter.
+ *
+ * Implements linear interpolation formula across official CPCB breakpoint tables.
+ *
+ * @param pollutant - Recognized CPCB pollutant key.
+ * @param concentration - Concentration value in µg/m³ (or mg/m³ for CO).
+ * @returns {@link PollutantSubIndexResult} with calculated sub-index, category, and validity status.
+ */
+export function calculatePollutantSubIndex(
+  pollutant: CpcbPollutant,
+  concentration: number
+): PollutantSubIndexResult {
+  if (isInvalidConcentration(concentration)) {
     return {
       pollutant,
       concentration,
@@ -215,26 +262,18 @@ export function calculatePollutantSubIndex(
     };
   }
 
-  // Find matching breakpoint interval
-  for (const bp of breakpoints) {
-    if (concentration >= bp.bLo && concentration <= bp.bHi) {
-      const subIndex = Math.round(
-        bp.iLo + ((bp.iHi - bp.iLo) / (bp.bHi - bp.bLo)) * (concentration - bp.bLo)
-      );
-      const clampedSubIndex = Math.min(500, Math.max(0, subIndex));
-      const cat = aqiValueToCategory(clampedSubIndex);
-      return {
-        pollutant,
-        concentration,
-        subIndex: clampedSubIndex,
-        category: cat,
-        status: 'valid',
-      };
-    }
+  const matched = findBreakpointForConcentration(breakpoints, concentration);
+  if (matched) {
+    const subIndex = interpolateSubIndex(matched, concentration);
+    return {
+      pollutant,
+      concentration,
+      subIndex,
+      category: aqiValueToCategory(subIndex),
+      status: 'valid',
+    };
   }
 
-  // If concentration is above maximum defined breakpoint, CPCB caps sub-index at 500 (Severe)
-  // or flags as out of range.
   const lastBp = breakpoints[breakpoints.length - 1];
   if (lastBp && concentration > lastBp.bHi) {
     return {
@@ -255,6 +294,72 @@ export function calculatePollutantSubIndex(
   };
 }
 
+/** Recognized CPCB pollutant keys list for iteration. */
+const ALL_POLLUTANT_KEYS: readonly CpcbPollutant[] = [
+  'pm25',
+  'pm10',
+  'no2',
+  'so2',
+  'co',
+  'o3',
+  'nh3',
+  'pb',
+] as const;
+
+/**
+ * Collects valid sub-indices across all monitored pollutants.
+ *
+ * @param concentrations - Raw reported pollutant values.
+ * @returns Structured collection of sub-indices, valid count, and particulate presence.
+ */
+function collectValidSubIndices(concentrations: RawPollutantConcentrations): {
+  subIndices: Partial<Record<CpcbPollutant, PollutantSubIndexResult>>;
+  validCount: number;
+  hasParticulate: boolean;
+} {
+  const subIndices: Partial<Record<CpcbPollutant, PollutantSubIndexResult>> = {};
+  let validCount = 0;
+  let hasPm25 = false;
+  let hasPm10 = false;
+
+  for (const key of ALL_POLLUTANT_KEYS) {
+    const rawVal = concentrations[key];
+    if (rawVal !== undefined && rawVal !== null && typeof rawVal === 'number' && rawVal >= 0) {
+      const res = calculatePollutantSubIndex(key, rawVal);
+      if (res.status !== 'invalid') {
+        subIndices[key] = res;
+        validCount += 1;
+        if (key === 'pm25') hasPm25 = true;
+        if (key === 'pm10') hasPm10 = true;
+      }
+    }
+  }
+
+  return { subIndices, validCount, hasParticulate: hasPm25 || hasPm10 };
+}
+
+/**
+ * Finds the maximum sub-index and identifies the prominent pollutant.
+ *
+ * @param subIndices - Map of valid pollutant sub-indices.
+ * @returns Max sub-index integer and prominent pollutant key.
+ */
+function findProminentSubIndex(
+  subIndices: Partial<Record<CpcbPollutant, PollutantSubIndexResult>>
+): { maxSubIndex: number; prominent: CpcbPollutant | null } {
+  let maxSubIndex = -1;
+  let prominent: CpcbPollutant | null = null;
+
+  for (const [pKey, res] of Object.entries(subIndices)) {
+    if (res && res.subIndex > maxSubIndex) {
+      maxSubIndex = res.subIndex;
+      prominent = pKey as CpcbPollutant;
+    }
+  }
+
+  return { maxSubIndex: Math.max(0, Math.min(500, maxSubIndex)), prominent };
+}
+
 /**
  * Calculates the official Indian CPCB National Air Quality Index (NAQI).
  *
@@ -269,39 +374,8 @@ export function calculateCpcbAqi(
   concentrations: RawPollutantConcentrations
 ): CpcbCalculationResult {
   const calculatedAt = new Date().toISOString();
-  const subIndices: Partial<Record<CpcbPollutant, PollutantSubIndexResult>> = {};
+  const { subIndices, validCount, hasParticulate } = collectValidSubIndices(concentrations);
 
-  const pollutantKeys: CpcbPollutant[] = [
-    'pm25',
-    'pm10',
-    'no2',
-    'so2',
-    'co',
-    'o3',
-    'nh3',
-    'pb',
-  ];
-
-  let validCount = 0;
-  let hasPm25 = false;
-  let hasPm10 = false;
-
-  for (const key of pollutantKeys) {
-    const rawVal = concentrations[key];
-    if (rawVal !== undefined && rawVal !== null && typeof rawVal === 'number' && rawVal >= 0) {
-      const res = calculatePollutantSubIndex(key, rawVal);
-      if (res.status !== 'invalid') {
-        subIndices[key] = res;
-        validCount += 1;
-        if (key === 'pm25') hasPm25 = true;
-        if (key === 'pm10') hasPm10 = true;
-      }
-    }
-  }
-
-  const hasParticulate = hasPm25 || hasPm10;
-
-  // Enforce official sufficiency conditions
   if (validCount < 3) {
     return {
       aqi: null,
@@ -330,22 +404,11 @@ export function calculateCpcbAqi(
     };
   }
 
-  // Calculate overall AQI = max(I_1, ..., I_n)
-  let maxSubIndex = -1;
-  let prominent: CpcbPollutant | null = null;
-
-  for (const [pKey, res] of Object.entries(subIndices)) {
-    if (res && res.subIndex > maxSubIndex) {
-      maxSubIndex = res.subIndex;
-      prominent = pKey as CpcbPollutant;
-    }
-  }
-
-  const overallAqi = Math.max(0, Math.min(500, maxSubIndex));
-  const category = aqiValueToCategory(overallAqi);
+  const { maxSubIndex, prominent } = findProminentSubIndex(subIndices);
+  const category = aqiValueToCategory(maxSubIndex);
 
   return {
-    aqi: overallAqi,
+    aqi: maxSubIndex,
     aqiCategory: category,
     prominentPollutant: prominent,
     subIndices,

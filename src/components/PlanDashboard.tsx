@@ -1,7 +1,8 @@
 /**
  * @file PlanDashboard.tsx
  * @description The results dashboard rendered after a successful AI plan generation.
- * Redesigned with Llamacoder's layout inspiration:
+ *
+ * Implements:
  * - Top Welcome Banner with quick summary stats
  * - Hero AirQualityCard (CPCB 0–500 scale, PM2.5, spectrum progress bar)
  * - Safe Ventilation Window card with actionable protocol
@@ -10,9 +11,6 @@
  * - Daily Low-Emission Routines with categorized pills
  * - Practical Indoor Clean-Air Hacks
  * - Emergency Protocol for Severe AQI days
- *
- * @example
- * <PlanDashboard plan={aiResponse} city="Anand Vihar, New Delhi" />
  */
 
 'use client';
@@ -23,8 +21,6 @@ import {
   Home,
   Clock,
   ShieldAlert,
-  Download,
-  Sparkles,
   Leaf,
   CheckCircle2,
 } from 'lucide-react';
@@ -38,7 +34,7 @@ import { EmergencyTips } from './EmergencyTips';
 import { GrapAlertCard } from './GrapAlertCard';
 import { EmergencyDirectorySection } from './EmergencyDirectorySection';
 import { SectionHeader } from './SectionHeader';
-import { isEmergencyLevel, getAqiConfig } from '@/lib/aqi-utils';
+import { isEmergencyLevel } from '@/lib/aqi-utils';
 import { getGrapRegulation } from '@/lib/grap-regulations';
 import { getEmergencyDirectory } from '@/lib/emergency-directory';
 import type {
@@ -51,35 +47,137 @@ import type {
 /** Props for `PlanDashboard`. */
 interface PlanDashboardProps {
   /** The validated AI response containing the full plan. */
-  plan: AiResponse;
+  readonly plan: AiResponse;
   /** The micro-location or city name entered by the user. */
-  city: string;
+  readonly city: string;
+}
+
+/**
+ * Extracts validated GRAP regulations or falls back to deterministic rule engine.
+ */
+function extractGrapRegulation(plan: AiResponse): GrapRegulationInfo {
+  if (plan.grapRegulation && typeof plan.grapRegulation === 'object' && 'stage' in plan.grapRegulation) {
+    return plan.grapRegulation as unknown as GrapRegulationInfo;
+  }
+  return getGrapRegulation(plan.aqiValue);
+}
+
+/**
+ * Extracts validated Emergency Directory or falls back to geographic registry.
+ */
+function extractEmergencyDirectory(plan: AiResponse, city: string): EmergencyDirectoryResult {
+  if (
+    plan.emergencyDirectory &&
+    typeof plan.emergencyDirectory === 'object' &&
+    'regionalHospitals' in plan.emergencyDirectory
+  ) {
+    return plan.emergencyDirectory as unknown as EmergencyDirectoryResult;
+  }
+  return getEmergencyDirectory(city);
+}
+
+/**
+ * Extracts verified Environmental Snapshot if available in the response.
+ */
+function extractEnvironmentalSnapshot(plan: AiResponse): EnvironmentalSnapshot | undefined {
+  if (
+    plan.environmentalData &&
+    typeof plan.environmentalData === 'object' &&
+    'status' in plan.environmentalData
+  ) {
+    return plan.environmentalData as unknown as EnvironmentalSnapshot;
+  }
+  return undefined;
+}
+
+/**
+ * Formats ISO timestamp into localized Indian time.
+ */
+function formatKolkataTime(isoString: string): string {
+  return new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata',
+  }).format(new Date(isoString));
+}
+
+/**
+ * `DashboardTopBanner` — Hero greeting and summary statistics strip.
+ */
+function DashboardTopBanner({
+  city,
+  plan,
+  formattedTime,
+}: {
+  readonly city: string;
+  readonly plan: AiResponse;
+  readonly formattedTime: string;
+}): React.ReactElement {
+  const isEmergency = isEmergencyLevel(plan.aqiCategory);
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-teal-200/80 bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 p-6 sm:p-8 text-white shadow-md">
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-md text-teal-200 shadow-inner">
+              <Leaf size={24} />
+            </span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-teal-200">
+                Synthesized Protection Plan
+              </p>
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+                {city} Air Action Plan
+              </h2>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto rounded-full bg-white/15 backdrop-blur-md px-3.5 py-1 text-xs font-semibold text-teal-100 border border-white/10">
+            <Clock size={13} aria-hidden="true" />
+            <span>Updated: {formattedTime}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/15 text-xs">
+          <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-xs">
+            <span className="text-teal-200 block text-[11px] font-medium">Daily Routines</span>
+            <span className="text-lg font-bold">{plan.lowEmissionRoutines.length} Action Items</span>
+          </div>
+          <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-xs">
+            <span className="text-teal-200 block text-[11px] font-medium">Indoor Hacks</span>
+            <span className="text-lg font-bold">{plan.indoorHacks.length} Solutions</span>
+          </div>
+          <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-xs">
+            <span className="text-teal-200 block text-[11px] font-medium">Ventilation Window</span>
+            <span className="text-lg font-bold truncate block">
+              {plan.safeVentilationWindow.timeWindow}
+            </span>
+          </div>
+          <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-xs">
+            <span className="text-teal-200 block text-[11px] font-medium">Health Severity</span>
+            <span className={`text-lg font-bold flex items-center gap-1 ${isEmergency ? 'text-red-300' : 'text-teal-100'}`}>
+              <CheckCircle2 size={16} />
+              {isEmergency ? 'Severe Advisory' : 'Active Protection'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 /**
  * `PlanDashboard` — Full results layout component.
- * Composed from atomic section components for maximum maintainability.
  *
  * @param props - {@link PlanDashboardProps}
  */
 export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactElement {
   const isEmergency = isEmergencyLevel(plan.aqiCategory);
-  const aqiConfig = getAqiConfig(plan.aqiCategory);
-
-  const grapRegulation: GrapRegulationInfo =
-    (plan.grapRegulation as unknown as GrapRegulationInfo) ??
-    getGrapRegulation(plan.aqiValue);
-
-  const emergencyDirectory: EmergencyDirectoryResult =
-    (plan.emergencyDirectory as unknown as EmergencyDirectoryResult) ??
-    getEmergencyDirectory(city);
-
-  /** Formats the generatedAt timestamp for display. */
-  const formattedTime = new Intl.DateTimeFormat('en-IN', {
-    dateStyle: 'long',
-    timeStyle: 'short',
-    timeZone: 'Asia/Kolkata',
-  }).format(new Date(plan.generatedAt));
+  const grapRegulation = extractGrapRegulation(plan);
+  const emergencyDirectory = extractEmergencyDirectory(plan, city);
+  const environmentalSnapshot = extractEnvironmentalSnapshot(plan);
+  const formattedTime = formatKolkataTime(plan.generatedAt);
 
   return (
     <main
@@ -87,165 +185,73 @@ export function PlanDashboard({ plan, city }: PlanDashboardProps): React.ReactEl
       aria-label="Your personalised air quality plan"
       className="space-y-8 animate-fade-in"
     >
-      {/* ── Top Summary Header Banner (Inspired by Llamacoder) ── */}
-      <section className="overflow-hidden rounded-3xl border border-teal-200/80 bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-900 p-6 sm:p-8 text-white shadow-md">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-md text-teal-200 shadow-inner">
-                <Leaf size={24} />
-              </span>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-teal-200">
-                  Synthesized Protection Plan
-                </p>
-                <h2 className="font-serif text-2xl sm:text-3xl font-bold leading-tight">
-                  Smog Defense for {city}
-                </h2>
-              </div>
-            </div>
+      <DashboardTopBanner city={city} plan={plan} formattedTime={formattedTime} />
 
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 backdrop-blur-md px-3 py-1 text-xs font-semibold text-teal-100">
-                <Sparkles size={12} className="text-teal-300" />
-                Live 24-Hour Thermal Model
-              </span>
-            </div>
-          </div>
-
-          {/* Quick Header Stats Strip */}
-          <div className="grid gap-3 sm:grid-cols-3 pt-2 border-t border-white/15">
-            <div className="rounded-2xl bg-white/10 backdrop-blur-md p-3.5 border border-white/10">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-teal-200">Current CPCB Band</p>
-              <p className="text-lg font-black text-white mt-0.5">
-                {aqiConfig.label} ({plan.aqiValue} AQI)
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-white/10 backdrop-blur-md p-3.5 border border-white/10">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-teal-200">Safe Ventilation Window</p>
-              <p className="text-lg font-black text-white mt-0.5 truncate">
-                {plan.safeVentilationWindow.timeWindow}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-white/10 backdrop-blur-md p-3.5 border border-white/10">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-teal-200">Ventilation Status</p>
-              <p className="text-lg font-black text-white mt-0.5 flex items-center gap-1.5">
-                {plan.safeVentilationWindow.isSafeToVentilate ? (
-                  <>
-                    <CheckCircle2 size={16} className="text-emerald-300" />
-                    <span>Safe To Open Briefly</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldAlert size={16} className="text-amber-300" />
-                    <span>Keep Windows Sealed</span>
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Hero AQI Card (CPCB 0–500 Spectrum + PM2.5) ── */}
       <AirQualityCard
         aqiValue={plan.aqiValue}
         aqiCategory={plan.aqiCategory}
         alertMessage={plan.alertMessage}
         summaryHeadline={plan.summaryHeadline}
         city={city}
-        environmentalSnapshot={plan.environmentalData as unknown as EnvironmentalSnapshot | undefined}
+        environmentalSnapshot={environmentalSnapshot}
         prominentPollutant={plan.prominentPollutant}
       />
 
-      {/* ── Statutory CAQM GRAP Regulation Banner ── */}
-      <section aria-label="CAQM GRAP regulations and statutory restrictions">
-        <GrapAlertCard regulation={grapRegulation} />
-      </section>
+      <GrapAlertCard grap={grapRegulation} currentAqi={plan.aqiValue} />
 
-      {/* ── Safe Ventilation Window Feature ── */}
-      <section aria-label="Safe ventilation window">
-        <VentilationWindowCard window={plan.safeVentilationWindow} />
-      </section>
+      <EmergencyDirectorySection directory={emergencyDirectory} city={city} />
 
-      {/* ── 24-Hour Hourly Forecast (Diurnal Inversion Cycle) ── */}
-      <section aria-label="24-hour air quality forecast" className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">
-        <SectionHeader
-          title="24-Hour Diurnal AQI Forecast"
-          subtitle={`Interactive hourly smog dispersion pattern calibrated for ${city}`}
-          icon={<Clock size={20} />}
-        />
+      <VentilationWindowCard window={plan.safeVentilationWindow} />
+
+      {plan.hourlyForecast.length > 0 && (
         <HourlyForecast forecast={plan.hourlyForecast} />
-      </section>
+      )}
 
-      {/* ── Impact Metrics ── */}
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">
-        <ImpactMetricsGrid metrics={plan.impactMetrics} />
-      </section>
-
-      {/* ── Emergency Tips & Medical Directory (conditional high placement on severe days) ── */}
-      {isEmergency && (
-        <section aria-label="Emergency smog protocol and hospital directory" className="space-y-6">
+      {plan.impactMetrics.length > 0 && (
+        <section aria-label="Projected health and emission impact metrics">
           <SectionHeader
-            title="⚠️ Emergency Smog Protocol"
-            subtitle="Critical actions and emergency healthcare infrastructure for severe air quality"
-            icon={<ShieldAlert size={20} />}
+            title="Projected Exposure & Health Impact"
+            subtitle="Quantified benefits of adhering to your personalized survival plan today."
           />
-          <EmergencyTips tips={plan.emergencyTips} />
-          <EmergencyDirectorySection directory={emergencyDirectory} city={city} />
+          <ImpactMetricsGrid metrics={plan.impactMetrics} />
         </section>
       )}
 
-      {/* ── Daily Routines ── */}
-      <section aria-label="Daily routines" className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">
-        <SectionHeader
-          title="Your Low-Emission Daily Routines"
-          subtitle="Personalised actions timed for minimum pollution exposure"
-          icon={<CalendarDays size={20} />}
-        />
-        <RoutineList routines={plan.lowEmissionRoutines} />
-      </section>
-
-      {/* ── Indoor Clean-Air Hacks ── */}
-      <section aria-label="Indoor air quality improvements" className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">
-        <SectionHeader
-          title="Indoor Air Quality Sanctuary Hacks"
-          subtitle="Cost-graded practical improvements to filter and protect indoor breathing spaces"
-          icon={<Home size={20} />}
-        />
-        <IndoorHacksList hacks={plan.indoorHacks} />
-      </section>
-
-      {/* ── Emergency Tips & Medical Directory (secondary placement on moderate/poor days) ── */}
-      {!isEmergency && (
-        <section aria-label="Emergency smog tips and hospital directory" className="space-y-6">
+      {plan.lowEmissionRoutines.length > 0 && (
+        <section aria-label="Your customized daily low-emission routines">
           <SectionHeader
-            title="Emergency Protocol & Pulmonology Directory"
-            subtitle="Verified emergency infrastructure ready if air quality deteriorates"
-            icon={<ShieldAlert size={20} />}
+            title="Optimized Daily Smog Schedule"
+            subtitle="Tailored daily adjustments to bypass the worst particulate spikes in your micro-location."
+            icon={<CalendarDays size={20} className="text-teal-600" />}
           />
-          <EmergencyTips tips={plan.emergencyTips} />
-          <EmergencyDirectorySection directory={emergencyDirectory} city={city} />
+          <RoutineList routines={plan.lowEmissionRoutines} />
         </section>
       )}
 
-      {/* ── Footer metadata ── */}
-      <footer className="rounded-2xl border border-teal-100 bg-teal-50/70 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
-        <div className="text-xs text-slate-600">
-          <span className="font-semibold text-slate-800">Plan generated:</span>{' '}
-          {formattedTime} · Powered by Google Gemini 3.5 Flash · CPCB 6-Band Scale
-        </div>
-        <button
-          onClick={() => window.print()}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-2xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500"
-          aria-label="Print or save your air quality plan as PDF"
+      {plan.indoorHacks.length > 0 && (
+        <section aria-label="Indoor air purification and clean-air hacks">
+          <SectionHeader
+            title="Indoor Clean-Air Fortification Hacks"
+            subtitle="Budget-friendly, highly actionable techniques to transform your living spaces into clean-air sanctuaries."
+            icon={<Home size={20} className="text-teal-600" />}
+          />
+          <IndoorHacksList hacks={plan.indoorHacks} />
+        </section>
+      )}
+
+      {isEmergency && plan.emergencyTips.length > 0 && (
+        <section
+          aria-label="Critical emergency protocol for severe air quality"
+          className="rounded-3xl border-2 border-red-500/70 bg-gradient-to-br from-red-50 via-rose-50 to-white p-6 sm:p-8 shadow-sm"
         >
-          <Download size={13} aria-hidden="true" />
-          Save as PDF
-        </button>
-      </footer>
+          <SectionHeader
+            title="Critical Emergency Protocol (Severe AQI)"
+            subtitle="Immediate precautionary directives when regional ambient pollution reaches critical thresholds."
+            icon={<ShieldAlert size={22} className="text-red-600" />}
+          />
+          <EmergencyTips tips={plan.emergencyTips} />
+        </section>
+      )}
     </main>
   );
 }

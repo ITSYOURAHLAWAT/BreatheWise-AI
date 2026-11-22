@@ -184,3 +184,38 @@ export function formatCost(cost: 'free' | 'low' | 'medium' | 'high'): string {
   };
   return map[cost];
 }
+
+/**
+ * Estimates ambient PM2.5 concentration in µg/m³ from a CPCB AQI value (0-500)
+ * using linear piecewise inverse interpolation against official CPCB breakpoints.
+ *
+ * @param aqi - Numerical AQI value on the 0-500 CPCB scale.
+ * @returns Estimated PM2.5 concentration in µg/m³.
+ */
+export function estimatePm25(aqi: number): number {
+  if (aqi <= 50) return Math.round((Math.max(0, aqi) / 50) * 30);
+  if (aqi <= 100) return Math.round(30 + ((aqi - 50) / 50) * 30);
+  if (aqi <= 200) return Math.round(60 + ((aqi - 100) / 100) * 30);
+  if (aqi <= 300) return Math.round(90 + ((aqi - 200) / 100) * 30);
+  if (aqi <= 400) return Math.round(120 + ((aqi - 300) / 100) * 130);
+  return Math.round(250 + ((Math.min(500, aqi) - 400) / 100) * 100);
+}
+
+/**
+ * Returns descriptive health and exposure guidance according to official CPCB advisories.
+ *
+ * @param category - Standard CPCB AQI category string.
+ * @returns Official health and behavioral advisory guidance text.
+ */
+export function getCpcbHealthImpact(category: string): string {
+  const guidanceMap: Record<string, string> = {
+    good: 'Minimal impact. Air quality is safe for all normal outdoor activities and natural ventilation.',
+    satisfactory: 'Minor breathing discomfort to sensitive people. Generally acceptable for the general public.',
+    moderate: 'Breathing discomfort to people with lungs, asthma, and heart diseases on prolonged exposure.',
+    poor: 'Breathing discomfort to most people on prolonged exposure. Limit high-exertion outdoor workouts.',
+    very_poor: 'Respiratory illness on prolonged exposure. Pronounced effect on people with lung/heart disease. Seal indoors.',
+    severe: 'Severe impacts on healthy people and serious health impacts on those with existing conditions. Keep all windows sealed.',
+  };
+  return guidanceMap[category] ?? 'Extreme air emergency. Cease all outdoor activities and run HEPA air filtration continuously.';
+}
+

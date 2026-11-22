@@ -103,126 +103,346 @@ export interface FullVentilationAnalysis {
  * @param hour - The hourly environmental data point.
  * @returns {@link EvaluatedVentilationHour}
  */
+/**
+ * Determines the atmospheric dispersion index based on Boundary Layer Height (PBLH) and wind speed.
+ *
+ * @param blh - Planetary boundary layer height in meters, or `null`.
+ * @param wind - Surface wind speed in km/h.
+ * @returns Favorable, moderate, stagnant, or unknown dispersion state.
+ */
+function determineDispersionIndex(
+  blh: number | null,
+  wind: number
+): 'favorable' | 'moderate' | 'stagnant' | 'unknown' {
+  if (blh !== null) {
+    if (blh >= 800 && wind >= 6) return 'favorable';
+    if (blh >= 400 || wind >= 5) return 'moderate';
+    return 'stagnant';
+  }
+  if (wind >= 8) return 'moderate';
+  return 'stagnant';
+}
+
+/**
+ * Assesses the primary particulate air hazard and baseline score deduction for a single hour.
+ *
+ * @param pm25 - Ambient PM2.5 in µg/m³.
+ * @param aqi - Numerical CPCB AQI value or `null`.
+ * @param dispersion - Atmospheric dispersion category.
+ * @param blh - Boundary layer height in meters or `null`.
+ * @returns Score deduction, baseline ventilation status, primary reason, and CO2 action.
+ */
+function assessParticulateHazard(
+  pm25: number,
+  aqi: number | null,
+  dispersion: 'favorable' | 'moderate' | 'stagnant' | 'unknown',
+  blh: number | null
+): {
+  scoreDeduction: number;
+  status: HourlyVentilationStatus;
+  primaryReason: string;
+  indoorCo2Action: string;
+} {
+  if (pm25 > 250 || (aqi !== null && aqi > 400)) {
+    return {
+      scoreDeduction: 85,
+      status: 'unsafe',
+      primaryReason: `Extreme ambient particulate concentration (PM2.5: ${pm25} µg/m³, AQI: ${aqi ?? 'Severe'}). Window opening will cause rapid toxic indoor accumulation.`,
+      indoorCo2Action: 'Keep all windows firmly sealed. Operate HEPA purifiers continuously on recirculate mode. Use indoor exhaust fans in bathrooms only if dampers seal tightly.',
+    };
+  }
+  if (pm25 > 120 || (aqi !== null && aqi > 300)) {
+    return {
+      scoreDeduction: 70,
+      status: 'unsafe',
+      primaryReason: `Heavy ambient pollution (PM2.5: ${pm25} µg/m³). Infiltration rate exceeds safe human pulmonary thresholds.`,
+      indoorCo2Action: 'Maintain sealed perimeter. If indoor CO2 feels stuffy, use portable air circulators or run air purifiers on high to promote internal air movement.',
+    };
+  }
+  if (pm25 > 60 || (aqi !== null && aqi > 100)) {
+    const isFavorable = dispersion === 'favorable';
+    return {
+      scoreDeduction: isFavorable ? 30 : 55,
+      status: 'caution',
+      primaryReason: isFavorable
+        ? `Moderate ambient pollution (PM2.5: ${pm25} µg/m³). Thermal convective mixing provides an acceptable window for brief aeration.`
+        : `Moderate to poor ambient air (PM2.5: ${pm25} µg/m³) under limited atmospheric dispersion (PBLH: ${blh ?? 'low'}m).`,
+      indoorCo2Action: isFavorable
+        ? 'Brief 10–15 minute cross-ventilation permissible to flush indoor CO2 and VOCs, followed immediately by 30 minutes of HEPA air cleaning on turbo.'
+        : 'Limit aeration to under 10 minutes only if indoor stuffiness is acute. Keep HEPA purifiers running.',
+    };
+  }
+  if (pm25 > 30 || (aqi !== null && aqi > 50)) {
+    return {
+      scoreDeduction: 15,
+      status: 'safe',
+      primaryReason: `Satisfactory ambient air quality (PM2.5: ${pm25} µg/m³). Natural cross-ventilation is safe for healthy households.`,
+      indoorCo2Action: 'Open opposing windows for 20–30 minutes to achieve full air exchange and displace accumulated CO2.',
+    };
+  }
+  return {
+    scoreDeduction: 0,
+    status: 'safe',
+    primaryReason: `Clean ambient air (PM2.5: ${pm25} µg/m³, AQI: ${aqi ?? 'Good'}). Optimal conditions for complete indoor fresh-air renewal.`,
+    indoorCo2Action: 'Open windows freely for natural ventilation.',
+  };
+}
+
+/**
+ * Builds an insufficient data evaluation when key telemetry is unavailable.
+ *
+ * @param hour - Raw hourly environmental point.
+ * @returns {@link EvaluatedVentilationHour} marked as insufficient_data.
+ */
+function buildInsufficientHour(hour: HourlyEnvironmentalPoint): EvaluatedVentilationHour {
+  return {
+    timeIso: hour.timeIso,
+    displayTime: hour.displayTime,
+    status: 'insufficient_data',
+    score: 0,
+    cpcbAqi: hour.cpcbAqi,
+    cpcbCategory: hour.cpcbCategory,
+    pm25: hour.pm25,
+    pm10: hour.pm10,
+    temperatureC: hour.temperatureC,
+    windSpeedKmh: hour.windSpeedKmh,
+    boundaryLayerHeightM: hour.boundaryLayerHeightM,
+    dispersionIndex: 'unknown',
+    confidence: 'low',
+    primaryReason: 'Incomplete particulate telemetry for this hour; safety cannot be verified.',
+    indoorCo2Action: 'Maintain current filtration; verify local air quality sensor before opening.',
+  };
+}
+
+/**
+ * Evaluates an individual hour for residential ventilation suitability.
+ *
+ * @param hour - The hourly environmental data point.
+ * @returns {@link EvaluatedVentilationHour}
+ */
 export function evaluateVentilationHour(
   hour: HourlyEnvironmentalPoint
 ): EvaluatedVentilationHour {
-  const pm25 = hour.pm25;
-  const pm10 = hour.pm10;
-  const aqi = hour.cpcbAqi;
+  if (hour.pm25 <= 0 && (!hour.cpcbAqi || hour.cpcbAqi <= 0)) {
+    return buildInsufficientHour(hour);
+  }
+
   const blh = hour.boundaryLayerHeightM;
-  const wind = hour.windSpeedKmh;
+  const dispersion = determineDispersionIndex(blh, hour.windSpeedKmh);
+  const hazard = assessParticulateHazard(hour.pm25, hour.cpcbAqi, dispersion, blh);
 
-  // Check data sufficiency
-  if (pm25 <= 0 && (!aqi || aqi <= 0)) {
-    return {
-      timeIso: hour.timeIso,
-      displayTime: hour.displayTime,
-      status: 'insufficient_data',
-      score: 0,
-      cpcbAqi: aqi,
-      cpcbCategory: hour.cpcbCategory,
-      pm25,
-      pm10,
-      temperatureC: hour.temperatureC,
-      windSpeedKmh: wind,
-      boundaryLayerHeightM: blh,
-      dispersionIndex: 'unknown',
-      confidence: 'low',
-      primaryReason: 'Incomplete particulate telemetry for this hour; safety cannot be verified.',
-      indoorCo2Action: 'Maintain current filtration; verify local air quality sensor before opening.',
-    };
-  }
+  let finalScore = 100 - hazard.scoreDeduction;
+  let finalStatus = hazard.status;
+  let finalReason = hazard.primaryReason;
 
-  // Assess dispersion conditions
-  let dispersion: 'favorable' | 'moderate' | 'stagnant' | 'unknown' = 'unknown';
-  if (blh !== null) {
-    if (blh >= 800 && wind >= 6) {
-      dispersion = 'favorable';
-    } else if (blh >= 400 || wind >= 5) {
-      dispersion = 'moderate';
-    } else {
-      dispersion = 'stagnant';
-    }
-  } else if (wind >= 8) {
-    dispersion = 'moderate';
-  } else {
-    dispersion = 'stagnant';
-  }
-
-  // Base score starting from 100
-  let score = 100;
-  let status: HourlyVentilationStatus = 'safe';
-  let primaryReason = '';
-  let indoorCo2Action = '';
-
-  // 1. Particulate penalty
-  if (pm25 > 250 || (aqi !== null && aqi > 400)) {
-    // Severe
-    score -= 85;
-    status = 'unsafe';
-    primaryReason = `Extreme ambient particulate concentration (PM2.5: ${pm25} µg/m³, AQI: ${aqi ?? 'Severe'}). Window opening will cause rapid toxic indoor accumulation.`;
-    indoorCo2Action = 'Keep all windows firmly sealed. Operate HEPA purifiers continuously on recirculate mode. Use indoor exhaust fans in bathrooms only if dampers seal tightly.';
-  } else if (pm25 > 120 || (aqi !== null && aqi > 300)) {
-    // Very Poor
-    score -= 70;
-    status = 'unsafe';
-    primaryReason = `Heavy ambient pollution (PM2.5: ${pm25} µg/m³). Infiltration rate exceeds safe human pulmonary thresholds.`;
-    indoorCo2Action = 'Maintain sealed perimeter. If indoor CO2 feels stuffy, use portable air circulators or run air purifiers on high to promote internal air movement.';
-  } else if (pm25 > 60 || (aqi !== null && aqi > 100)) {
-    // Moderate / Poor
-    score -= 40;
-    if (dispersion === 'favorable') {
-      score += 10;
-      status = 'caution';
-      primaryReason = `Moderate ambient pollution (PM2.5: ${pm25} µg/m³). Thermal convective mixing provides an acceptable window for brief aeration.`;
-      indoorCo2Action = 'Brief 10–15 minute cross-ventilation permissible to flush indoor CO2 and VOCs, followed immediately by 30 minutes of HEPA air cleaning on turbo.';
-    } else {
-      score -= 15;
-      status = 'caution';
-      primaryReason = `Moderate to poor ambient air (PM2.5: ${pm25} µg/m³) under limited atmospheric dispersion (PBLH: ${blh ?? 'low'}m).`;
-      indoorCo2Action = 'Limit aeration to under 10 minutes only if indoor stuffiness is acute. Keep HEPA purifiers running.';
-    }
-  } else if (pm25 > 30 || (aqi !== null && aqi > 50)) {
-    // Satisfactory
-    score -= 15;
-    status = 'safe';
-    primaryReason = `Satisfactory ambient air quality (PM2.5: ${pm25} µg/m³). Natural cross-ventilation is safe for healthy households.`;
-    indoorCo2Action = 'Open opposing windows for 20–30 minutes to achieve full air exchange and displace accumulated CO2.';
-  } else {
-    // Good
-    status = 'safe';
-    primaryReason = `Clean ambient air (PM2.5: ${pm25} µg/m³, AQI: ${aqi ?? 'Good'}). Optimal conditions for complete indoor fresh-air renewal.`;
-    indoorCo2Action = 'Open windows freely for natural ventilation.';
-  }
-
-  // 2. Meteorological dispersion modifiers
   if (dispersion === 'stagnant') {
-    score -= 15;
-    if (status === 'safe') status = 'caution';
-    primaryReason += ` Nocturnal thermal inversion layer is compressed (${blh !== null ? blh + 'm' : 'low'}), restricting dispersion.`;
-  } else if (dispersion === 'favorable' && status === 'caution') {
-    primaryReason += ` Solar surface heating has lifted the boundary mixing layer to ${blh}m, improving dispersion.`;
+    finalScore -= 15;
+    if (finalStatus === 'safe') finalStatus = 'caution';
+    finalReason += ` Nocturnal thermal inversion layer is compressed (${blh !== null ? blh + 'm' : 'low'}), restricting dispersion.`;
+  } else if (dispersion === 'favorable' && finalStatus === 'caution') {
+    finalReason += ` Solar surface heating has lifted the boundary mixing layer to ${blh}m, improving dispersion.`;
   }
 
-  // Determine confidence
-  const confidence: VentilationConfidence = blh !== null && wind >= 0 ? 'high' : 'medium';
+  const confidence: VentilationConfidence = blh !== null && hour.windSpeedKmh >= 0 ? 'high' : 'medium';
 
   return {
     timeIso: hour.timeIso,
     displayTime: hour.displayTime,
-    status,
-    score: Math.max(0, Math.min(100, Math.round(score))),
-    cpcbAqi: aqi,
+    status: finalStatus,
+    score: Math.max(0, Math.min(100, Math.round(finalScore))),
+    cpcbAqi: hour.cpcbAqi,
     cpcbCategory: hour.cpcbCategory,
-    pm25,
-    pm10,
+    pm25: hour.pm25,
+    pm10: hour.pm10,
     temperatureC: hour.temperatureC,
-    windSpeedKmh: wind,
+    windSpeedKmh: hour.windSpeedKmh,
     boundaryLayerHeightM: blh,
     dispersionIndex: dispersion,
     confidence,
-    primaryReason,
-    indoorCo2Action,
+    primaryReason: finalReason,
+    indoorCo2Action: hazard.indoorCo2Action,
+  };
+}
+
+/**
+ * Returns an explicit insufficient-data response when hourly forecast points are absent.
+ *
+ * @returns {@link FullVentilationAnalysis} configured with safe fallbacks and explicit data warning.
+ */
+function buildInsufficientDataAnalysis(): FullVentilationAnalysis {
+  return {
+    overallStatus: 'insufficient_data',
+    isSafeToVentilate: false,
+    primaryWindow: {
+      timeWindow: 'Data Unavailable',
+      expectedAqi: 'Forecast Unavailable',
+      recommendation: 'Environmental forecast data is currently unavailable. Safety of opening windows cannot be established. Keep living spaces sealed if outdoor odor or haze is present.',
+      isSafeToVentilate: false,
+      status: 'insufficient_data',
+      confidence: 'low',
+      scientificReasoning: 'Insufficient meteorological or particulate telemetry to compute safe aeration intervals.',
+    },
+    contiguousIntervals: [],
+    hourlyEvaluations: [],
+    indoorCo2Guidance: {
+      alertLevel: 'moderate',
+      action: 'Operate internal HEPA purifiers on continuous circulation; avoid unmonitored window opening.',
+      technicalDetails: 'Without ambient particulate verification, fresh air intake risk cannot be computed.',
+    },
+    meteorologicalSynthesis: 'Atmospheric dispersion conditions cannot be determined due to missing forecast streams.',
+  };
+}
+
+/**
+ * Aggregates contiguous blocks of identical hourly ventilation evaluations.
+ *
+ * @param hourlyEvaluations - Array of evaluated hourly points.
+ * @returns Contiguous intervals with aggregated metrics and actionable protocols.
+ */
+function aggregateContiguousBlocks(
+  hourlyEvaluations: EvaluatedVentilationHour[]
+): ContiguousVentilationInterval[] {
+  const contiguousIntervals: ContiguousVentilationInterval[] = [];
+  let currentBlock: EvaluatedVentilationHour[] = [];
+
+  for (const curr of hourlyEvaluations) {
+    if (currentBlock.length === 0) {
+      currentBlock.push(curr);
+    } else {
+      const prev = currentBlock[currentBlock.length - 1];
+      if (prev && prev.status === curr.status) {
+        currentBlock.push(curr);
+      } else {
+        contiguousIntervals.push(summarizeInterval(currentBlock, contiguousIntervals.length + 1));
+        currentBlock = [curr];
+      }
+    }
+  }
+
+  if (currentBlock.length > 0) {
+    contiguousIntervals.push(summarizeInterval(currentBlock, contiguousIntervals.length + 1));
+  }
+
+  return contiguousIntervals;
+}
+
+/**
+ * Selects the optimal interval candidate for primary recommendation based on safety hierarchy.
+ *
+ * @param intervals - Array of aggregated contiguous intervals.
+ * @returns Selected interval, overall system status, and boolean safe flag.
+ */
+function selectOptimalInterval(
+  intervals: ContiguousVentilationInterval[]
+): {
+  chosenInterval: ContiguousVentilationInterval | null;
+  overallStatus: FullVentilationAnalysis['overallStatus'];
+  isSafeToVentilate: boolean;
+} {
+  const safe = intervals.filter((i) => i.status === 'safe');
+  const caution = intervals.filter((i) => i.status === 'caution');
+  const unsafe = intervals.filter((i) => i.status === 'unsafe');
+
+  if (safe.length > 0) {
+    const chosen = safe.reduce((prev, curr) => (curr.durationHours > prev.durationHours ? curr : prev));
+    return { chosenInterval: chosen, overallStatus: 'safe_window_available', isSafeToVentilate: true };
+  }
+  if (caution.length > 0) {
+    const chosen = caution.reduce((prev, curr) => (curr.averageAqi < prev.averageAqi ? curr : prev));
+    return { chosenInterval: chosen, overallStatus: 'caution_only', isSafeToVentilate: false };
+  }
+  return { chosenInterval: unsafe[0] ?? null, overallStatus: 'sealed_mandatory', isSafeToVentilate: false };
+}
+
+/**
+ * Synthesizes indoor CO2 displacement protocol versus outdoor aerosol intrusion hazard.
+ *
+ * @param overallStatus - Current system-wide ventilation status.
+ * @returns Indoor CO2 alert level, actionable instruction, and technical rationale.
+ */
+function synthesizeIndoorCo2Guidance(
+  overallStatus: FullVentilationAnalysis['overallStatus']
+): FullVentilationAnalysis['indoorCo2Guidance'] {
+  if (overallStatus === 'sealed_mandatory') {
+    return {
+      alertLevel: 'critical',
+      action: 'Do not open windows to resolve stuffiness. Use internal mechanical air movement or run HEPA purifiers on medium speed.',
+      technicalDetails: 'When outdoor AQI > 300, 15 minutes of open windows introduces >150 µg/m³ of PM2.5 into living spaces. This acute pulmonary toxicity is significantly more hazardous than brief CO2 elevation (1000–1400 ppm).',
+    };
+  }
+  if (overallStatus === 'caution_only') {
+    return {
+      alertLevel: 'moderate',
+      action: 'Execute a timed 10–15 minute cross-room flush during the caution window, then immediately reseal windows and run air purifiers on high.',
+      technicalDetails: 'A brief cross-flow creates high volumetric air exchange, displacing accumulated respiratory CO2 while limiting particulate mass ingress to a level easily scrubbed by indoor HEPA units in 20–30 minutes.',
+    };
+  }
+  return {
+    alertLevel: 'normal',
+    action: 'Natural ventilation is safe. Open opposing windows for 20–30 minutes to replenish oxygen and purge indoor pollutants.',
+    technicalDetails: 'Ambient particulate concentration is low enough that natural air exchange improves overall indoor air quality without particle burden.',
+  };
+}
+
+/**
+ * Generates meteorological narrative describing airshed boundary layer dynamics.
+ *
+ * @param hourlyEvaluations - Evaluated hourly points.
+ * @returns Synthesis narrative describing diurnal inversion and dispersion conditions.
+ */
+function synthesizeMeteorologicalDynamics(
+  hourlyEvaluations: EvaluatedVentilationHour[]
+): string {
+  const favorableCount = hourlyEvaluations.filter((h) => h.dispersionIndex === 'favorable').length;
+  const stagnantCount = hourlyEvaluations.filter((h) => h.dispersionIndex === 'stagnant').length;
+
+  if (stagnantCount > 16) {
+    return 'Predominantly stagnant atmospheric conditions across the Delhi NCR airshed. Low boundary layer height (<400m) and calm winds produce severe nocturnal trapping.';
+  }
+  if (favorableCount > 4) {
+    return 'Diurnal solar radiation induces thermal mixing in the afternoon, providing a temporary window of elevated boundary layer height and improved dispersion.';
+  }
+  return 'Moderate atmospheric dispersion with limited diurnal ventilation potential. Wind speeds remain the dominant factor for particulate dilution.';
+}
+
+/**
+ * Constructs the primary window recommendation object from the chosen interval.
+ *
+ * @param chosen - The selected contiguous ventilation interval.
+ * @param isSafeToVentilate - Boolean safety flag.
+ * @returns Primary window details for the dashboard card.
+ */
+function buildPrimaryWindow(
+  chosen: ContiguousVentilationInterval | null,
+  isSafeToVentilate: boolean
+): FullVentilationAnalysis['primaryWindow'] {
+  if (!chosen) {
+    return {
+      timeWindow: 'No Safe Window Today',
+      expectedAqi: 'Ambient AQI remains elevated throughout the cycle',
+      recommendation: 'Outdoor pollution remains dangerously elevated. Keep all windows firmly sealed and run HEPA air purifiers continuously.',
+      isSafeToVentilate: false,
+      status: 'unsafe',
+      confidence: 'high',
+      scientificReasoning: 'Thermal inversion and calm surface winds trap particulates near ground level across all 24 hours.',
+    };
+  }
+
+  const scientificReasoning =
+    chosen.status === 'safe'
+      ? `Ambient air quality is within satisfactory thresholds during this ${chosen.durationHours}-hour window, allowing safe room flushing.`
+      : chosen.status === 'caution'
+      ? `Midday solar warming raises the boundary mixing layer to break surface stagnation, yielding the day's lowest particulate exposure window (~${chosen.averageAqi} AQI). Only brief cross-flow is permissible.`
+      : `Heavy surface stagnation persists without any clean-air interval. Window opening would cause toxic PM2.5 infiltration exceeding indoor CO2 hazards.`;
+
+  return {
+    timeWindow: `${chosen.startTime} – ${chosen.endTime}`,
+    expectedAqi: `Expected AQI: ~${chosen.averageAqi} (PM2.5: ~${chosen.averagePm25} µg/m³)`,
+    recommendation: chosen.recommendation,
+    isSafeToVentilate,
+    status: chosen.status,
+    confidence: 'high',
+    scientificReasoning,
   };
 }
 
@@ -237,156 +457,21 @@ export function analyze24HourVentilation(
   hourlyPoints: HourlyEnvironmentalPoint[]
 ): FullVentilationAnalysis {
   if (!hourlyPoints || hourlyPoints.length === 0) {
-    return {
-      overallStatus: 'insufficient_data',
-      isSafeToVentilate: false,
-      primaryWindow: {
-        timeWindow: 'Data Unavailable',
-        expectedAqi: 'Forecast Unavailable',
-        recommendation: 'Environmental forecast data is currently unavailable. Safety of opening windows cannot be established. Keep living spaces sealed if outdoor odor or haze is present.',
-        isSafeToVentilate: false,
-        status: 'insufficient_data',
-        confidence: 'low',
-        scientificReasoning: 'Insufficient meteorological or particulate telemetry to compute safe aeration intervals.',
-      },
-      contiguousIntervals: [],
-      hourlyEvaluations: [],
-      indoorCo2Guidance: {
-        alertLevel: 'moderate',
-        action: 'Operate internal HEPA purifiers on continuous circulation; avoid unmonitored window opening.',
-        technicalDetails: 'Without ambient particulate verification, fresh air intake risk cannot be computed.',
-      },
-      meteorologicalSynthesis: 'Atmospheric dispersion conditions cannot be determined due to missing forecast streams.',
-    };
+    return buildInsufficientDataAnalysis();
   }
 
-  // 1. Evaluate every individual hour
-  const hourlyEvaluations: EvaluatedVentilationHour[] = hourlyPoints.map(evaluateVentilationHour);
-
-  // 2. Identify contiguous blocks of identical status
-  const contiguousIntervals: ContiguousVentilationInterval[] = [];
-  let currentBlock: EvaluatedVentilationHour[] = [];
-
-  for (let i = 0; i < hourlyEvaluations.length; i++) {
-    const curr = hourlyEvaluations[i];
-    if (!curr) continue;
-
-    if (currentBlock.length === 0) {
-      currentBlock.push(curr);
-    } else {
-      const prev = currentBlock[currentBlock.length - 1];
-      if (prev && prev.status === curr.status) {
-        currentBlock.push(curr);
-      } else {
-        // Finalize previous block
-        contiguousIntervals.push(summarizeInterval(currentBlock, contiguousIntervals.length + 1));
-        currentBlock = [curr];
-      }
-    }
-  }
-
-  if (currentBlock.length > 0) {
-    contiguousIntervals.push(summarizeInterval(currentBlock, contiguousIntervals.length + 1));
-  }
-
-  // 3. Find optimal candidate interval for primary window recommendation
-  // Priority: longest 'safe' interval > longest 'caution' interval > least bad 'unsafe' interval
-  const safeIntervals = contiguousIntervals.filter((i) => i.status === 'safe');
-  const cautionIntervals = contiguousIntervals.filter((i) => i.status === 'caution');
-  const unsafeIntervals = contiguousIntervals.filter((i) => i.status === 'unsafe');
-
-  let chosenInterval: ContiguousVentilationInterval | null = null;
-  let overallStatus: FullVentilationAnalysis['overallStatus'] = 'sealed_mandatory';
-  let isSafeToVentilate = false;
-
-  if (safeIntervals.length > 0) {
-    // Choose longest safe interval
-    chosenInterval = safeIntervals.reduce((prev, curr) =>
-      curr.durationHours > prev.durationHours ? curr : prev
-    );
-    overallStatus = 'safe_window_available';
-    isSafeToVentilate = true;
-  } else if (cautionIntervals.length > 0) {
-    // Choose caution interval with lowest average AQI
-    chosenInterval = cautionIntervals.reduce((prev, curr) =>
-      curr.averageAqi < prev.averageAqi ? curr : prev
-    );
-    overallStatus = 'caution_only';
-    isSafeToVentilate = false; // Flagged as cautionary rather than unreservedly safe
-  } else if (unsafeIntervals.length > 0) {
-    chosenInterval = unsafeIntervals[0] ?? null;
-    overallStatus = 'sealed_mandatory';
-    isSafeToVentilate = false;
-  }
-
-  // 4. Construct Primary Window Object
-  let timeWindow = 'No Safe Window Today';
-  let expectedAqi = 'Ambient AQI remains elevated throughout the cycle';
-  let recommendation = 'Outdoor pollution remains dangerously elevated. Keep all windows firmly sealed and run HEPA air purifiers continuously.';
-  let primaryStatus: HourlyVentilationStatus = 'unsafe';
-  const confidence: VentilationConfidence = 'high';
-  let scientificReasoning = 'Thermal inversion and calm surface winds trap particulates near ground level across all 24 hours.';
-
-  if (chosenInterval) {
-    timeWindow = `${chosenInterval.startTime} – ${chosenInterval.endTime}`;
-    expectedAqi = `Expected AQI: ~${chosenInterval.averageAqi} (PM2.5: ~${chosenInterval.averagePm25} µg/m³)`;
-    recommendation = chosenInterval.recommendation;
-    primaryStatus = chosenInterval.status;
-
-    if (chosenInterval.status === 'safe') {
-      scientificReasoning = `Ambient air quality is within satisfactory thresholds during this ${chosenInterval.durationHours}-hour window, allowing safe room flushing.`;
-    } else if (chosenInterval.status === 'caution') {
-      scientificReasoning = `Midday solar warming raises the boundary mixing layer to break surface stagnation, yielding the day's lowest particulate exposure window (~${chosenInterval.averageAqi} AQI). Only brief cross-flow is permissible.`;
-    } else {
-      scientificReasoning = `Heavy surface stagnation persists without any clean-air interval. Window opening would cause toxic PM2.5 infiltration exceeding indoor CO2 hazards.`;
-    }
-  }
-
-  // 5. Indoor CO2 vs. Outdoor Particulate Trade-off Guidance
-  const indoorCo2Guidance: FullVentilationAnalysis['indoorCo2Guidance'] = overallStatus === 'sealed_mandatory'
-    ? {
-        alertLevel: 'critical',
-        action: 'Do not open windows to resolve stuffiness. Use internal mechanical air movement or run HEPA purifiers on medium speed.',
-        technicalDetails: 'When outdoor AQI > 300, 15 minutes of open windows introduces >150 µg/m³ of PM2.5 into living spaces. This acute pulmonary toxicity is significantly more hazardous than brief CO2 elevation (1000–1400 ppm).',
-      }
-    : overallStatus === 'caution_only'
-    ? {
-        alertLevel: 'moderate',
-        action: 'Execute a timed 10–15 minute cross-room flush during the caution window, then immediately reseal windows and run air purifiers on high.',
-        technicalDetails: 'A brief cross-flow creates high volumetric air exchange, displacing accumulated respiratory CO2 while limiting particulate mass ingress to a level easily scrubbed by indoor HEPA units in 20–30 minutes.',
-      }
-    : {
-        alertLevel: 'normal',
-        action: 'Natural ventilation is safe. Open opposing windows for 20–30 minutes to replenish oxygen and purge indoor pollutants.',
-        technicalDetails: 'Ambient particulate concentration is low enough that natural air exchange improves overall indoor air quality without particle burden.',
-      };
-
-  // 6. Meteorological synthesis
-  const favorableCount = hourlyEvaluations.filter((h) => h.dispersionIndex === 'favorable').length;
-  const stagnantCount = hourlyEvaluations.filter((h) => h.dispersionIndex === 'stagnant').length;
-
-  const meteorologicalSynthesis = stagnantCount > 16
-    ? 'Predominantly stagnant atmospheric conditions across the Delhi NCR airshed. Low boundary layer height (<400m) and calm winds produce severe nocturnal trapping.'
-    : favorableCount > 4
-    ? 'Diurnal solar radiation induces thermal mixing in the afternoon, providing a temporary window of elevated boundary layer height and improved dispersion.'
-    : 'Moderate atmospheric dispersion with limited diurnal ventilation potential. Wind speeds remain the dominant factor for particulate dilution.';
+  const hourlyEvaluations = hourlyPoints.map(evaluateVentilationHour);
+  const contiguousIntervals = aggregateContiguousBlocks(hourlyEvaluations);
+  const { chosenInterval, overallStatus, isSafeToVentilate } = selectOptimalInterval(contiguousIntervals);
 
   return {
     overallStatus,
     isSafeToVentilate,
-    primaryWindow: {
-      timeWindow,
-      expectedAqi,
-      recommendation,
-      isSafeToVentilate,
-      status: primaryStatus,
-      confidence,
-      scientificReasoning,
-    },
+    primaryWindow: buildPrimaryWindow(chosenInterval, isSafeToVentilate),
     contiguousIntervals,
     hourlyEvaluations,
-    indoorCo2Guidance,
-    meteorologicalSynthesis,
+    indoorCo2Guidance: synthesizeIndoorCo2Guidance(overallStatus),
+    meteorologicalSynthesis: synthesizeMeteorologicalDynamics(hourlyEvaluations),
   };
 }
 

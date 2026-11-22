@@ -13,10 +13,10 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { UserProfileSchema } from '@/lib/schemas';
+import { UserProfileSchema, type UserProfile } from '@/lib/schemas';
 import { generateAirQualityPlan, generateDeterministicFallbackPlan } from '@/lib/gemini';
-import { fetchEnvironmentalSnapshot } from '@/lib/environmental-service';
-import { analyze24HourVentilation } from '@/lib/ventilation-engine';
+import { fetchEnvironmentalSnapshot, type EnvironmentalSnapshot } from '@/lib/environmental-service';
+import { analyze24HourVentilation, type FullVentilationAnalysis } from '@/lib/ventilation-engine';
 import { getGrapRegulation } from '@/lib/grap-regulations';
 import { getEmergencyDirectory } from '@/lib/emergency-directory';
 import type { AiResponse } from '@/lib/types';
@@ -79,6 +79,118 @@ async function withTimeout<T>(
 }
 
 /**
+ * Safely parses and validates the incoming JSON request against `UserProfileSchema`.
+ *
+ * @param request - Next.js App Router request.
+ * @returns Result object with validated profile or ready-to-return 400 error response.
+ */
+async function parseAndValidateProfileRequest(
+  request: NextRequest
+): Promise<
+  | { success: true; profile: UserProfile }
+  | { success: false; response: NextResponse<ApiErrorResponse> }
+> {
+  let requestBody: unknown;
+  try {
+    requestBody = await request.json();
+  } catch {
+    return {
+      success: false,
+      response: NextResponse.json(
+        { error: 'Malformed JSON payload in request body.' },
+        { status: 400, headers: RESPONSE_HEADERS }
+      ),
+    };
+  }
+
+  const validationResult = UserProfileSchema.safeParse(requestBody);
+  if (!validationResult.success) {
+    const flattenedErrors = validationResult.error.flatten();
+    return {
+      success: false,
+      response: NextResponse.json(
+        {
+          error: 'Validation failed: Invalid user profile parameters.',
+          details: {
+            fieldErrors: flattenedErrors.fieldErrors,
+            formErrors: flattenedErrors.formErrors,
+          },
+        },
+        { status: 400, headers: RESPONSE_HEADERS }
+      ),
+    };
+  }
+
+  return { success: true, profile: validationResult.data };
+}
+
+/**
+ * Fetches authoritative environmental snapshot and computes ventilation dispersion analysis.
+ * Gracefully returns undefined telemetry if external services fail or time out.
+ *
+ * @param city - User input city or micro-location.
+ * @returns Environmental snapshot and ventilation analysis.
+ */
+async function fetchTelemetry(city: string): Promise<{
+  snapshot?: EnvironmentalSnapshot;
+  ventilation?: FullVentilationAnalysis;
+}> {
+  try {
+    const snapshot = await fetchEnvironmentalSnapshot(city);
+    const ventilation = analyze24HourVentilation(snapshot.hourlyForecast);
+    return { snapshot, ventilation };
+  } catch (err) {
+    console.warn('[API /api/generate-plan] Environmental service snapshot unavailable:', err);
+    return {};
+  }
+}
+
+/**
+ * Enriches the generated or fallback plan with environmental data, safe ventilation window,
+ * CAQM GRAP regulations, and local emergency directories.
+ *
+ * @param basePlan - Base AI or deterministic fallback plan.
+ * @param city - Target city / micro-location.
+ * @param snapshot - Authoritative environmental snapshot.
+ * @param ventilation - 24-hour ventilation analysis.
+ * @returns Fully enriched `AiResponse`.
+ */
+function enrichPlan(
+  basePlan: AiResponse,
+  city: string,
+  snapshot?: EnvironmentalSnapshot,
+  ventilation?: FullVentilationAnalysis
+): AiResponse {
+  const plan = { ...basePlan };
+
+  if (snapshot) {
+    plan.environmentalData = snapshot as unknown as Record<string, unknown>;
+    if (snapshot.cpcbResult.prominentPollutant) {
+      plan.prominentPollutant = snapshot.cpcbResult.prominentPollutant;
+    }
+  }
+
+  if (ventilation) {
+    plan.safeVentilationWindow = {
+      timeWindow: ventilation.primaryWindow.timeWindow,
+      expectedAqi: ventilation.primaryWindow.expectedAqi,
+      recommendation: ventilation.primaryWindow.recommendation,
+      isSafeToVentilate: ventilation.primaryWindow.isSafeToVentilate,
+      status: ventilation.primaryWindow.status,
+      confidence: ventilation.primaryWindow.confidence,
+      scientificReasoning: ventilation.primaryWindow.scientificReasoning,
+      contiguousIntervals: ventilation.contiguousIntervals as unknown as Array<Record<string, unknown>>,
+      indoorCo2Advice: ventilation.indoorCo2Guidance as unknown as Record<string, unknown>,
+    };
+  }
+
+  plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
+  plan.emergencyDirectory = getEmergencyDirectory(city) as unknown as Record<string, unknown>;
+
+  return plan;
+}
+
+/**
  * Handles POST requests to generate a personalized AI air quality survival plan.
  *
  * Validates request payload against `UserProfileSchema` and dispatches generation
@@ -90,129 +202,28 @@ async function withTimeout<T>(
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<AiResponse | ApiErrorResponse>> {
-  let requestBody: unknown;
+  const parseResult = await parseAndValidateProfileRequest(request);
+  if (!parseResult.success) {
+    return parseResult.response;
+  }
 
-  // 1. Guardrail: Safe JSON payload extraction
+  const profile = parseResult.profile;
+  const { snapshot, ventilation } = await fetchTelemetry(profile.city);
+
+  let rawPlan: AiResponse | null = null;
   try {
-    requestBody = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: 'Malformed JSON payload in request body.',
-      },
-      {
-        status: 400,
-        headers: RESPONSE_HEADERS,
-      }
+    rawPlan = await withTimeout<AiResponse>(
+      (signal) => generateAirQualityPlan(profile, signal, snapshot, ventilation),
+      API_TIMEOUT_MS
     );
+  } catch (err) {
+    console.warn('[API /api/generate-plan] AI generation timed out or threw; using fallback:', err);
   }
 
-  // 2. Guardrail: Strict Zod validation
-  const validationResult = UserProfileSchema.safeParse(requestBody);
+  const selectedPlan = rawPlan ?? generateDeterministicFallbackPlan(profile, snapshot, ventilation);
+  const enrichedPlan = enrichPlan(selectedPlan, profile.city, snapshot, ventilation);
 
-  if (!validationResult.success) {
-    const flattenedErrors = validationResult.error.flatten();
-    return NextResponse.json(
-      {
-        error: 'Validation failed: Invalid user profile parameters.',
-        details: {
-          fieldErrors: flattenedErrors.fieldErrors,
-          formErrors: flattenedErrors.formErrors,
-        },
-      },
-      {
-        status: 400,
-        headers: RESPONSE_HEADERS,
-      }
-    );
-  }
-
-  // 3. Execution Guardrail: Resilient Generation with Multi-Tier Fallback & Timeout Protection
-  let plan: AiResponse | null = null;
-  let environmentalSnapshot: Awaited<ReturnType<typeof fetchEnvironmentalSnapshot>> | undefined;
-  let ventilationAnalysis: ReturnType<typeof analyze24HourVentilation> | undefined;
-
-  try {
-    try {
-      environmentalSnapshot = await fetchEnvironmentalSnapshot(validationResult.data.city);
-      ventilationAnalysis = analyze24HourVentilation(environmentalSnapshot.hourlyForecast);
-    } catch (envErr) {
-      console.warn('[API /api/generate-plan] Environmental service snapshot unavailable, continuing:', envErr);
-    }
-
-    try {
-      plan = await withTimeout<AiResponse>(
-        (signal) =>
-          generateAirQualityPlan(
-            validationResult.data,
-            signal,
-            environmentalSnapshot,
-            ventilationAnalysis
-          ),
-        API_TIMEOUT_MS
-      );
-    } catch (llmErr) {
-      console.warn(
-        '[API /api/generate-plan] LLM generation exceeded timeout or threw error; deploying deterministic fallback plan:',
-        llmErr
-      );
-      plan = generateDeterministicFallbackPlan(
-        validationResult.data,
-        environmentalSnapshot,
-        ventilationAnalysis
-      );
-    }
-
-    if (!plan) {
-      plan = generateDeterministicFallbackPlan(
-        validationResult.data,
-        environmentalSnapshot,
-        ventilationAnalysis
-      );
-    }
-
-    if (environmentalSnapshot) {
-      plan.environmentalData = environmentalSnapshot as unknown as Record<string, unknown>;
-      if (environmentalSnapshot.cpcbResult.prominentPollutant) {
-        plan.prominentPollutant = environmentalSnapshot.cpcbResult.prominentPollutant;
-      }
-    }
-
-    if (ventilationAnalysis) {
-      // Synchronize safe ventilation window with authoritative scientific calculation
-      plan.safeVentilationWindow = {
-        timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
-        expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
-        recommendation: ventilationAnalysis.primaryWindow.recommendation,
-        isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
-        status: ventilationAnalysis.primaryWindow.status,
-        confidence: ventilationAnalysis.primaryWindow.confidence,
-        scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
-        contiguousIntervals: ventilationAnalysis.contiguousIntervals as unknown as Array<Record<string, unknown>>,
-        indoorCo2Advice: ventilationAnalysis.indoorCo2Guidance as unknown as Record<string, unknown>,
-      };
-    }
-
-    // Synchronize CAQM GRAP regulation with current calculated AQI
-    plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
-    // Synchronize emergency hospital directory matched to user's location
-    plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
-  } catch (fatalErr) {
-    console.error(
-      '[API /api/generate-plan] Fatal server error during generation; invoking emergency fallback plan:',
-      fatalErr
-    );
-    plan = generateDeterministicFallbackPlan(
-      validationResult.data,
-      environmentalSnapshot,
-      ventilationAnalysis
-    );
-    plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
-    plan.emergencyDirectory = getEmergencyDirectory(validationResult.data.city) as unknown as Record<string, unknown>;
-  }
-
-  // 4. Guaranteed 200 OK Response: Deliver complete CPCB-grounded survival plan
-  return NextResponse.json(plan, {
+  return NextResponse.json(enrichedPlan, {
     status: 200,
     headers: RESPONSE_HEADERS,
   });

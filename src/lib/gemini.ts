@@ -459,6 +459,118 @@ ${envTelemetryClause}${languageClause}
 Generate a hyper-localized, 24-hour actionable plan following the structured output schema. Include the hourly diurnal AQI curve (0-500) and the Safe Ventilation Window for fresh air.`;
 }
 
+// ─── Module Constants ───────────────────────────────────────────────────────
+
+/** Priority-ordered models used for LLM fallback race. */
+const CANDIDATE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'] as const;
+
+/** Cutoff timeout per individual model call in milliseconds. */
+const MODEL_TIMEOUT_MS = 7000;
+
+/** Model generation temperature. */
+const LLM_TEMPERATURE = 0.3;
+
+/** Max output token limit for structured JSON plan generation. */
+const LLM_MAX_TOKENS = 2048;
+
+/** Default baseline AQI constants for major Indian climate zones. */
+const DEFAULT_NCR_AQI = 412;
+const DEFAULT_COASTAL_AQI = 235;
+const DEFAULT_DECCAN_AQI = 145;
+const DEFAULT_BASELINE_AQI = 285;
+
+/**
+ * Attempts text generation with an individual Gemini model under a strict timeout race.
+ *
+ * @param genAI - Configured GoogleGenAI client instance.
+ * @param model - Target model identifier string.
+ * @param prompt - User prompt text.
+ * @param systemInstruction - System instruction text.
+ * @param parentSignal - Optional parent abort signal.
+ * @returns Generated raw text or `null` if the attempt timed out or failed.
+ */
+async function attemptSingleModel(
+  genAI: GoogleGenAI,
+  model: string,
+  prompt: string,
+  systemInstruction: string,
+  parentSignal?: AbortSignal
+): Promise<string | null> {
+  const modelTimeoutController = new AbortController();
+  const timer = setTimeout(() => modelTimeoutController.abort(), MODEL_TIMEOUT_MS);
+
+  try {
+    const responsePromise = genAI.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: aiResponseJsonSchema,
+        temperature: LLM_TEMPERATURE,
+        maxOutputTokens: LLM_MAX_TOKENS,
+      },
+    });
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      modelTimeoutController.signal.addEventListener('abort', () =>
+        reject(new Error(`Model ${model} timed out after ${MODEL_TIMEOUT_MS}ms.`))
+      );
+      parentSignal?.addEventListener('abort', () =>
+        reject(new Error('Parent operation aborted.'))
+      );
+    });
+
+    const response = await Promise.race([responsePromise, abortPromise]);
+    return response?.text && response.text.trim() !== '' ? response.text : null;
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[gemini.ts] Attempt with model ${model} failed:`, errorMsg);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Dispatches candidate models sequentially with fast fallback racing.
+ *
+ * @param genAI - GoogleGenAI client instance.
+ * @param prompt - Sanitized user prompt.
+ * @param systemInstruction - System instruction string.
+ * @param signal - Optional cancellation signal.
+ * @returns First non-empty raw JSON response text or `null`.
+ */
+async function executeModelFallbackRace(
+  genAI: GoogleGenAI,
+  prompt: string,
+  systemInstruction: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  for (const model of CANDIDATE_MODELS) {
+    if (signal?.aborted) break;
+    const text = await attemptSingleModel(genAI, model, prompt, systemInstruction, signal);
+    if (text) return text;
+  }
+  return null;
+}
+
+/**
+ * Parses and verifies raw model JSON output against the strict Zod AiResponseSchema.
+ *
+ * @param rawJsonText - Raw JSON text from Gemini.
+ * @returns Validated `AiResponse` or `null` if parsing/validation fails.
+ */
+function parseAndValidateAiResponse(rawJsonText: string): AiResponse | null {
+  try {
+    const parsedData = JSON.parse(rawJsonText);
+    const result = AiResponseSchema.safeParse(parsedData);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Primary API Method ──────────────────────────────────────────────────────
 
 /**
@@ -474,7 +586,6 @@ Generate a hyper-localized, 24-hour actionable plan following the structured out
  * @param environmentalSnapshot - Optional authoritative environmental snapshot.
  * @param ventilationAnalysis - Optional scientific safe ventilation analysis.
  * @returns A promise resolving to a strictly typed, validated `AiResponse`.
- * @throws {Error} If the API key is absent, the AI call fails, times out, or the response breaks schema constraints.
  */
 export async function generateAirQualityPlan(
   profile: UserProfile,
@@ -492,164 +603,95 @@ export async function generateAirQualityPlan(
     const prompt = buildUserPrompt(profile, environmentalSnapshot, ventilationAnalysis);
     const systemInstruction = buildSystemInstruction();
 
-    // Primary model with fast fallback
-    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
-    let rawJsonText = '';
-    let lastError: Error | null = null;
-
-    for (const model of candidateModels) {
-      if (signal?.aborted) {
-        break;
-      }
-
-      try {
-        // Race each model with a strict 7-second cutoff so we never hang
-        const modelTimeoutController = new AbortController();
-        const modelTimer = setTimeout(() => modelTimeoutController.abort(), 7000);
-
-        const responsePromise = genAI.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: aiResponseJsonSchema,
-            temperature: 0.3,
-            maxOutputTokens: 2048,
-          },
-        });
-
-        const abortPromise = new Promise<never>((_, reject) => {
-          modelTimeoutController.signal.addEventListener('abort', () =>
-            reject(new Error(`Model ${model} timed out after 7000ms.`))
-          );
-          signal?.addEventListener('abort', () =>
-            reject(new Error('Parent operation aborted.'))
-          );
-        });
-
-        let response;
-        try {
-          response = await Promise.race([responsePromise, abortPromise]);
-        } finally {
-          clearTimeout(modelTimer);
-        }
-
-        if (response?.text && response.text.trim() !== '') {
-          rawJsonText = response.text;
-          break;
-        }
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(`[gemini.ts] Attempt with model ${model} failed, trying next candidate:`, lastError.message);
-      }
-    }
-
-    if (!rawJsonText || rawJsonText.trim() === '') {
-      console.warn(
-        `[gemini.ts] Gemini API unavailable (${lastError?.message ?? 'no response'}); deploying deterministic fallback plan.`
-      );
+    const rawJsonText = await executeModelFallbackRace(genAI, prompt, systemInstruction, signal);
+    if (!rawJsonText) {
+      console.warn('[gemini.ts] Gemini API unavailable; deploying deterministic fallback plan.');
       return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
     }
 
-    let parsedData: unknown;
-    try {
-      parsedData = JSON.parse(rawJsonText);
-    } catch {
-      console.warn('[gemini.ts] JSON parsing failed; deploying deterministic fallback plan.');
+    const plan = parseAndValidateAiResponse(rawJsonText);
+    if (!plan) {
+      console.warn('[gemini.ts] Parsing or schema validation failed; deploying deterministic fallback plan.');
       return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
     }
 
-    // Final runtime barrier validation via Zod
-    const validationResult = AiResponseSchema.safeParse(parsedData);
-
-    if (!validationResult.success) {
-      console.warn('[gemini.ts] Schema validation failed on LLM response; deploying deterministic fallback plan.');
-      return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
-    }
-
-    return validationResult.data;
+    return plan;
   } catch (fatalErr) {
     console.warn('[gemini.ts] Unexpected exception in generateAirQualityPlan; deploying deterministic fallback plan:', fatalErr);
     return generateDeterministicFallbackPlan(profile, environmentalSnapshot, ventilationAnalysis);
   }
 }
 
+// ─── Deterministic Fallback Plan Builders ─────────────────────────────────────
+
 /**
- * Generates an emergency, scientifically modeled air quality survival plan
- * when the external AI provider is temporarily unavailable (e.g. 503 high demand or network timeout).
+ * Determines baseline AQI and category from micro-location geography or authoritative telemetry.
  *
- * Implements deterministic CPCB 6-band categorization, real-world Indian winter diurnal curves,
- * personalized health protections, and safe ventilation window calculations.
- *
- * @param profile - Validated user profile.
- * @param environmentalSnapshot - Optional authoritative environmental snapshot.
- * @param ventilationAnalysis - Optional scientific safe ventilation analysis.
- * @returns Fully validated `AiResponse` strictly satisfying `AiResponseSchema`.
+ * @param locLower - Lowercase micro-location name.
+ * @param snapshot - Optional authoritative environmental snapshot.
+ * @returns Baseline AQI value and matching CPCB category.
  */
-export function generateDeterministicFallbackPlan(
-  profile: UserProfile,
-  environmentalSnapshot?: EnvironmentalSnapshot,
-  ventilationAnalysis?: FullVentilationAnalysis
-): AiResponse {
-  const locLower = profile.city.toLowerCase();
-
-  // Baseline AQI estimation based on micro-location & Indian geography
-  let baseAqi = 285;
-  let aqiCategory: AqiCategory = 'poor';
-
-  if (
-    environmentalSnapshot &&
-    environmentalSnapshot.status === 'available' &&
-    typeof environmentalSnapshot.cpcbResult.aqi === 'number'
-  ) {
-    baseAqi = environmentalSnapshot.cpcbResult.aqi;
-    const cat = environmentalSnapshot.cpcbResult.aqiCategory;
-    aqiCategory = (cat === 'Out of range / Exceptional' ? 'severe' : cat) ?? 'severe';
-  } else {
-    if (
-      locLower.includes('delhi') ||
-      locLower.includes('anand vihar') ||
-      locLower.includes('jahangirpuri') ||
-      locLower.includes('noida') ||
-      locLower.includes('ghaziabad') ||
-      locLower.includes('gurugram') ||
-      locLower.includes('patna')
-    ) {
-      baseAqi = 412; // CPCB Severe band
-    } else if (
-      locLower.includes('mumbai') ||
-      locLower.includes('bandra') ||
-      locLower.includes('kurla') ||
-      locLower.includes('chembur') ||
-      locLower.includes('kolkata')
-    ) {
-      baseAqi = 235; // CPCB Poor band
-    } else if (
-      locLower.includes('bengaluru') ||
-      locLower.includes('bangalore') ||
-      locLower.includes('chennai') ||
-      locLower.includes('hyderabad') ||
-      locLower.includes('pune')
-    ) {
-      baseAqi = 145; // CPCB Moderate band
-    }
-
-    const category = aqiValueToCategory(baseAqi);
-    aqiCategory = category === 'Out of range / Exceptional' ? 'severe' : category;
+function determineBaselineAqi(
+  locLower: string,
+  snapshot?: EnvironmentalSnapshot
+): { baseAqi: number; aqiCategory: AqiCategory } {
+  if (snapshot && snapshot.status === 'available' && typeof snapshot.cpcbResult.aqi === 'number') {
+    const aqi = snapshot.cpcbResult.aqi;
+    const cat = snapshot.cpcbResult.aqiCategory;
+    const aqiCategory = (cat === 'Out of range / Exceptional' ? 'severe' : cat) ?? 'severe';
+    return { baseAqi: aqi, aqiCategory };
   }
 
-  // Diurnal thermal inversion curve
-  const morningPeak = Math.min(500, Math.round(baseAqi * 1.15));
-  const midMorning = Math.min(500, Math.round(baseAqi * 1.05));
-  const afternoonDip = Math.max(45, Math.round(baseAqi * 0.65));
-  const eveningRush = Math.min(500, Math.round(baseAqi * 0.95));
-  const nightTrap = Math.min(500, Math.round(baseAqi * 1.1));
+  const isNcr =
+    locLower.includes('delhi') ||
+    locLower.includes('anand vihar') ||
+    locLower.includes('jahangirpuri') ||
+    locLower.includes('noida') ||
+    locLower.includes('ghaziabad') ||
+    locLower.includes('gurugram') ||
+    locLower.includes('patna');
 
-  const isSafe = afternoonDip < 350;
+  const isCoastal =
+    locLower.includes('mumbai') ||
+    locLower.includes('bandra') ||
+    locLower.includes('kurla') ||
+    locLower.includes('chembur') ||
+    locLower.includes('kolkata');
 
-  // Build vulnerability-tailored routines
-  const routines = [
+  const isDeccan =
+    locLower.includes('bengaluru') ||
+    locLower.includes('bangalore') ||
+    locLower.includes('chennai') ||
+    locLower.includes('hyderabad') ||
+    locLower.includes('pune');
+
+  const baseAqi = isNcr
+    ? DEFAULT_NCR_AQI
+    : isCoastal
+    ? DEFAULT_COASTAL_AQI
+    : isDeccan
+    ? DEFAULT_DECCAN_AQI
+    : DEFAULT_BASELINE_AQI;
+
+  const category = aqiValueToCategory(baseAqi);
+  const aqiCategory = category === 'Out of range / Exceptional' ? 'severe' : category;
+
+  return { baseAqi, aqiCategory };
+}
+
+/**
+ * Builds deterministic low-emission routines tailored to user profile.
+ *
+ * @param profile - User profile.
+ * @param isSafe - Whether ventilation window is safe.
+ * @returns Array of 6 prioritized daily routines.
+ */
+function buildFallbackRoutines(profile: UserProfile, isSafe: boolean) {
+  const isMucosalVulnerable =
+    profile.healthVulnerabilities.includes('bronchitis') ||
+    profile.healthVulnerabilities.includes('allergies_sinusitis');
+
+  return [
     {
       id: 'routine-1',
       timeOfDay: 'morning' as const,
@@ -680,7 +722,7 @@ export function generateDeterministicFallbackPlan(
       id: 'routine-4',
       timeOfDay: 'afternoon' as const,
       title: 'Hydration and mucosal membrane barrier care',
-      description: profile.healthVulnerabilities.includes('bronchitis') || profile.healthVulnerabilities.includes('allergies_sinusitis')
+      description: isMucosalVulnerable
         ? 'Perform warm saline nasal rinse (Neti pot with distilled water) and drink warm herbal infusions (ginger, tulsi) to soothe respiratory tract inflammation.'
         : 'Drink at least 2.5–3 liters of warm water to keep respiratory cilia hydrated and actively expelling inhaled particulate matter.',
       category: 'diet' as const,
@@ -703,8 +745,15 @@ export function generateDeterministicFallbackPlan(
       estimatedBenefitUg: 28,
     },
   ];
+}
 
-  const indoorHacks = [
+/**
+ * Builds deterministic indoor clean-air hacks.
+ *
+ * @returns Array of 5 graded indoor improvement hacks.
+ */
+function buildFallbackIndoorHacks() {
+  return [
     {
       id: 'hack-1',
       title: 'Wet-mopping over dry broom sweeping',
@@ -746,67 +795,165 @@ export function generateDeterministicFallbackPlan(
       indoorReductionPercent: 20,
     },
   ];
+}
 
-  const impactMetrics = [
-    {
-      label: 'PM2.5 Exposure Reduction',
-      value: '68%',
-      trend: 'down' as const,
-      severity: 'positive' as const,
-    },
-    {
-      label: 'Respiratory Strain Relief',
-      value: '75%',
-      trend: 'up' as const,
-      severity: 'positive' as const,
-    },
-    {
-      label: 'Indoor Air Cleared',
-      value: '82%',
-      trend: 'up' as const,
-      severity: 'positive' as const,
-    },
-    {
-      label: 'Symptom Flare-up Risk',
-      value: '-60%',
-      trend: 'down' as const,
-      severity: 'positive' as const,
-    },
+/**
+ * Builds deterministic quantified impact metrics.
+ *
+ * @returns Exactly 4 quantified impact metrics.
+ */
+function buildFallbackImpactMetrics() {
+  return [
+    { label: 'PM2.5 Exposure Reduction', value: '68%', trend: 'down' as const, severity: 'positive' as const },
+    { label: 'Respiratory Strain Relief', value: '75%', trend: 'up' as const, severity: 'positive' as const },
+    { label: 'Indoor Air Cleared', value: '82%', trend: 'up' as const, severity: 'positive' as const },
+    { label: 'Symptom Flare-up Risk', value: '-60%', trend: 'down' as const, severity: 'positive' as const },
   ];
+}
 
-  const hourlyForecast = [
+/**
+ * Builds deterministic 24-hour hourly diurnal forecast curve.
+ *
+ * @param baseAqi - Baseline AQI integer.
+ * @param isSafe - Whether afternoon dip permits safe ventilation.
+ * @returns 5 representative hourly forecast entries across 24 hours.
+ */
+function buildFallbackHourlyForecast(baseAqi: number, isSafe: boolean) {
+  const morningPeak = Math.min(500, Math.round(baseAqi * 1.15));
+  const midMorning = Math.min(500, Math.round(baseAqi * 1.05));
+  const afternoonDip = Math.max(45, Math.round(baseAqi * 0.65));
+  const eveningRush = Math.min(500, Math.round(baseAqi * 0.95));
+  const nightTrap = Math.min(500, Math.round(baseAqi * 1.1));
+
+  const toCategory = (val: number): AqiCategory => {
+    const cat = aqiValueToCategory(val);
+    return (cat === 'Out of range / Exceptional' ? 'severe' : cat) as AqiCategory;
+  };
+
+  return [
     {
       time: '6:00 AM',
-      aqiCategory: (aqiValueToCategory(morningPeak) === 'Out of range / Exceptional' ? 'severe' : aqiValueToCategory(morningPeak)) as AqiCategory,
+      aqiCategory: toCategory(morningPeak),
       aqiValue: morningPeak,
       shortNote: 'Severe nocturnal inversion peak; keep home sealed and avoid outdoor transit.',
     },
     {
       time: '10:00 AM',
-      aqiCategory: (aqiValueToCategory(midMorning) === 'Out of range / Exceptional' ? 'severe' : aqiValueToCategory(midMorning)) as AqiCategory,
+      aqiCategory: toCategory(midMorning),
       aqiValue: midMorning,
       shortNote: 'Morning commute smog persists under calm boundary layer.',
     },
     {
       time: '2:30 PM',
-      aqiCategory: (aqiValueToCategory(afternoonDip) === 'Out of range / Exceptional' ? 'severe' : aqiValueToCategory(afternoonDip)) as AqiCategory,
+      aqiCategory: toCategory(afternoonDip),
       aqiValue: afternoonDip,
-      shortNote: isSafe ? 'Solar thermal mixing brings lowest AQI of the day; safe for brief aeration.' : 'Partial afternoon clearance, but ambient air remains hazardous.',
+      shortNote: isSafe
+        ? 'Solar thermal mixing brings lowest AQI of the day; safe for brief aeration.'
+        : 'Partial afternoon clearance, but ambient air remains hazardous.',
     },
     {
       time: '6:30 PM',
-      aqiCategory: (aqiValueToCategory(eveningRush) === 'Out of range / Exceptional' ? 'severe' : aqiValueToCategory(eveningRush)) as AqiCategory,
+      aqiCategory: toCategory(eveningRush),
       aqiValue: eveningRush,
       shortNote: 'Evening rush hour emissions surge as boundary layer drops.',
     },
     {
       time: '10:00 PM',
-      aqiCategory: (aqiValueToCategory(nightTrap) === 'Out of range / Exceptional' ? 'severe' : aqiValueToCategory(nightTrap)) as AqiCategory,
+      aqiCategory: toCategory(nightTrap),
       aqiValue: nightTrap,
       shortNote: 'Cold ground temperature traps heavy emissions overnight; run purifiers on sleep mode.',
     },
   ];
+}
 
+/**
+ * Builds safe ventilation window recommendation object.
+ *
+ * @param afternoonDip - Expected AQI during afternoon thermal dip.
+ * @param isSafe - Whether ventilation is safe.
+ * @param analysis - Optional scientific ventilation analysis.
+ * @returns Validated safe ventilation window object.
+ */
+function buildFallbackVentilationWindow(
+  afternoonDip: number,
+  isSafe: boolean,
+  analysis?: FullVentilationAnalysis
+) {
+  if (analysis?.primaryWindow) {
+    return {
+      timeWindow: analysis.primaryWindow.timeWindow,
+      expectedAqi: analysis.primaryWindow.expectedAqi,
+      recommendation: analysis.primaryWindow.recommendation,
+      isSafeToVentilate: analysis.primaryWindow.isSafeToVentilate,
+      status: analysis.primaryWindow.status,
+      confidence: analysis.primaryWindow.confidence,
+      scientificReasoning: analysis.primaryWindow.scientificReasoning,
+    };
+  }
+
+  return {
+    timeWindow: isSafe ? '2:00 PM – 4:00 PM' : 'No Safe Window Today',
+    expectedAqi: isSafe
+      ? `Dips to ~${afternoonDip} AQI (Midday solar mixing)`
+      : 'Dangerous ambient particulate concentrations across all 24 hours',
+    recommendation: isSafe
+      ? 'Open cross-facing windows for 10–15 minutes only to purge indoor CO2 and VOCs, then seal windows and run HEPA purifiers on turbo mode for 30 minutes.'
+      : 'Ambient air is too dangerous (>250 AQI). Keep all windows firmly sealed and operate indoor HEPA purifiers continuously on auto-circulation.',
+    isSafeToVentilate: isSafe,
+    status: isSafe ? ('caution' as const) : ('unsafe' as const),
+    confidence: 'medium' as const,
+    scientificReasoning: isSafe
+      ? 'Temporary vertical mixing provides a cautionary aeration window.'
+      : 'Surface thermal stagnation and heavy particulate accumulation prohibit safe window opening.',
+  };
+}
+
+/**
+ * Builds emergency tips localized in English or Hindi.
+ *
+ * @param isHindi - True if output should be generated in Hindi.
+ * @returns Array of at least 4 critical emergency tips.
+ */
+function buildFallbackEmergencyTips(isHindi: boolean): string[] {
+  if (isHindi) {
+    return [
+      'बाहर निकलते समय परिवार के प्रत्येक सदस्य के लिए प्रमाणित N95 / FFP2 मास्क सुनिश्चित करें; सामान्य कपड़े के मास्क सूक्ष्म PM2.5 को नहीं रोकते।',
+      'जहरीले स्मॉग के रिसाव को रोकने के लिए खिड़कियों और दरवाजों पर वेदर-स्ट्रिपिंग टेप या गीले तौलिये लगाएं।',
+      'इमरजेंसी इनहेलर और निर्धारित दवाएं तैयार रखें; आपातकालीन स्वास्थ्य संपर्कों को स्पीड डायल पर रखें।',
+      'घर के अंदर अगरबत्ती, धूपबत्ती, या मोमबत्तियां जलाने से पूरी तरह बचें, जिससे अंदरूनी PM2.5 बढ़ता है।',
+    ];
+  }
+
+  return [
+    'Ensure every family member wears a certified N95 / FFP2 respirator when stepping outdoors; standard cloth masks do not filter fine PM2.5.',
+    'Seal window and door perimeters with weather stripping to stop toxic smog infiltration.',
+    'Check emergency inhalers and medications; keep emergency healthcare contacts on speed dial for vulnerable members.',
+    'Avoid burning incense, mosquito coils, or candles indoors, which exacerbate indoor PM2.5 concentrations.',
+  ];
+}
+
+/**
+ * Generates an emergency, scientifically modeled air quality survival plan
+ * when the external AI provider is temporarily unavailable (e.g. 503 high demand or network timeout).
+ *
+ * Implements deterministic CPCB 6-band categorization, real-world Indian winter diurnal curves,
+ * personalized health protections, and safe ventilation window calculations.
+ *
+ * @param profile - Validated user profile.
+ * @param environmentalSnapshot - Optional authoritative environmental snapshot.
+ * @param ventilationAnalysis - Optional scientific safe ventilation analysis.
+ * @returns Fully validated `AiResponse` strictly satisfying `AiResponseSchema`.
+ */
+export function generateDeterministicFallbackPlan(
+  profile: UserProfile,
+  environmentalSnapshot?: EnvironmentalSnapshot,
+  ventilationAnalysis?: FullVentilationAnalysis
+): AiResponse {
+  const locLower = profile.city.toLowerCase();
+  const { baseAqi, aqiCategory } = determineBaselineAqi(locLower, environmentalSnapshot);
+
+  const afternoonDip = Math.max(45, Math.round(baseAqi * 0.65));
+  const isSafe = afternoonDip < 350;
   const isHindi = profile.language === 'hi';
 
   return {
@@ -818,48 +965,12 @@ export function generateDeterministicFallbackPlan(
     summaryHeadline: isHindi
       ? `${profile.city} के लिए 24 घंटे का शीतकालीन स्मॉग सुरक्षा प्लान`
       : `24-Hour Winter Smog Survival & Clean Air Plan for ${profile.city}`,
-    lowEmissionRoutines: routines,
-    indoorHacks,
-    impactMetrics,
-    hourlyForecast,
-    safeVentilationWindow: ventilationAnalysis?.primaryWindow
-      ? {
-          timeWindow: ventilationAnalysis.primaryWindow.timeWindow,
-          expectedAqi: ventilationAnalysis.primaryWindow.expectedAqi,
-          recommendation: ventilationAnalysis.primaryWindow.recommendation,
-          isSafeToVentilate: ventilationAnalysis.primaryWindow.isSafeToVentilate,
-          status: ventilationAnalysis.primaryWindow.status,
-          confidence: ventilationAnalysis.primaryWindow.confidence,
-          scientificReasoning: ventilationAnalysis.primaryWindow.scientificReasoning,
-        }
-      : {
-          timeWindow: isSafe ? '2:00 PM – 4:00 PM' : 'No Safe Window Today',
-          expectedAqi: isSafe
-            ? `Dips to ~${afternoonDip} AQI (Midday solar mixing)`
-            : 'Dangerous ambient particulate concentrations across all 24 hours',
-          recommendation: isSafe
-            ? 'Open cross-facing windows for 10–15 minutes only to purge indoor CO2 and VOCs, then seal windows and run HEPA purifiers on turbo mode for 30 minutes.'
-            : 'Ambient air is too dangerous (>250 AQI). Keep all windows firmly sealed and operate indoor HEPA purifiers continuously on auto-circulation.',
-          isSafeToVentilate: isSafe,
-          status: isSafe ? ('caution' as const) : ('unsafe' as const),
-          confidence: 'medium' as const,
-          scientificReasoning: isSafe
-            ? 'Temporary vertical mixing provides a cautionary aeration window.'
-            : 'Surface thermal stagnation and heavy particulate accumulation prohibit safe window opening.',
-        },
-    emergencyTips: isHindi
-      ? [
-          'बाहर निकलते समय परिवार के प्रत्येक सदस्य के लिए प्रमाणित N95 / FFP2 मास्क सुनिश्चित करें; सामान्य कपड़े के मास्क सूक्ष्म PM2.5 को नहीं रोकते।',
-          'जहरीले स्मॉग के रिसाव को रोकने के लिए खिड़कियों और दरवाजों पर वेदर-स्ट्रिपिंग टेप या गीले तौलिये लगाएं।',
-          'इमरजेंसी इनहेलर और निर्धारित दवाएं तैयार रखें; आपातकालीन स्वास्थ्य संपर्कों को स्पीड डायल पर रखें।',
-          'घर के अंदर अगरबत्ती, धूपबत्ती, या मोमबत्तियां जलाने से पूरी तरह बचें, जिससे अंदरूनी PM2.5 बढ़ता है।',
-        ]
-      : [
-          'Ensure every family member wears a certified N95 / FFP2 respirator when stepping outdoors; standard cloth masks do not filter fine PM2.5.',
-          'Seal window and door perimeters with weather stripping to stop toxic smog infiltration.',
-          'Check emergency inhalers and medications; keep emergency healthcare contacts on speed dial for vulnerable members.',
-          'Avoid burning incense, mosquito coils, or candles indoors, which exacerbate indoor PM2.5 concentrations.',
-        ],
+    lowEmissionRoutines: buildFallbackRoutines(profile, isSafe),
+    indoorHacks: buildFallbackIndoorHacks(),
+    impactMetrics: buildFallbackImpactMetrics(),
+    hourlyForecast: buildFallbackHourlyForecast(baseAqi, isSafe),
+    safeVentilationWindow: buildFallbackVentilationWindow(afternoonDip, isSafe, ventilationAnalysis),
+    emergencyTips: buildFallbackEmergencyTips(isHindi),
     generatedAt: new Date().toISOString(),
     grapRegulation: getGrapRegulation(baseAqi) as unknown as Record<string, unknown>,
     emergencyDirectory: getEmergencyDirectory(profile.city) as unknown as Record<string, unknown>,

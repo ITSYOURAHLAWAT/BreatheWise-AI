@@ -18,43 +18,68 @@ import React, { useRef, useId, useCallback } from 'react';
 import { MapPin, Heart, Activity, Car, Sparkles, Languages } from 'lucide-react';
 import { UserProfileSchema } from '@/lib/schemas';
 import type { ProfileFormProps, UserProfile } from '@/lib/types';
+import type { z } from 'zod';
 
 /** All health vulnerability options with display labels. */
-const HEALTH_OPTIONS: Array<{ value: UserProfile['healthVulnerabilities'][number]; label: string }> = [
-  { value: 'asthma',              label: '🫁 Asthma' },
-  { value: 'bronchitis',          label: '🫁 Bronchitis' },
+const HEALTH_OPTIONS: ReadonlyArray<{
+  value: UserProfile['healthVulnerabilities'][number];
+  label: string;
+}> = [
+  { value: 'asthma', label: '🫁 Asthma' },
+  { value: 'bronchitis', label: '🫁 Bronchitis' },
   { value: 'allergies_sinusitis', label: '🤧 Allergies / Sinusitis' },
-  { value: 'copd',                label: '🫁 COPD' },
-  { value: 'heart_disease',       label: '❤️ Heart Disease' },
-  { value: 'immunocompromised',   label: '🛡️ Immunocompromised' },
-  { value: 'diabetes',            label: '🩸 Diabetes' },
-  { value: 'pregnant',            label: '🤰 Pregnant' },
-  { value: 'elderly',             label: '👴 Elderly (65+)' },
-  { value: 'children',            label: '👶 Children' },
-  { value: 'none',                label: '✅ None' },
-];
+  { value: 'copd', label: '🫁 COPD' },
+  { value: 'heart_disease', label: '❤️ Heart Disease' },
+  { value: 'immunocompromised', label: '🛡️ Immunocompromised' },
+  { value: 'diabetes', label: '🩸 Diabetes' },
+  { value: 'pregnant', label: '🤰 Pregnant' },
+  { value: 'elderly', label: '👴 Elderly (65+)' },
+  { value: 'children', label: '👶 Children' },
+  { value: 'none', label: '✅ None' },
+] as const;
 
 /** Activity level options. */
-const ACTIVITY_OPTIONS: Array<{ value: UserProfile['activityLevel']; label: string }> = [
-  { value: 'sedentary',         label: 'Sedentary (desk job, minimal outdoors)' },
-  { value: 'lightly_active',    label: 'Lightly Active (occasional walks)' },
+const ACTIVITY_OPTIONS: ReadonlyArray<{
+  value: UserProfile['activityLevel'];
+  label: string;
+}> = [
+  { value: 'sedentary', label: 'Sedentary (desk job, minimal outdoors)' },
+  { value: 'lightly_active', label: 'Lightly Active (occasional walks)' },
   { value: 'moderately_active', label: 'Moderately Active (regular exercise)' },
-  { value: 'very_active',       label: 'Very Active (daily outdoor workouts)' },
-];
+  { value: 'very_active', label: 'Very Active (daily outdoor workouts)' },
+] as const;
 
 /** Commute mode options. */
-const COMMUTE_OPTIONS: Array<{ value: UserProfile['commuteMode']; label: string }> = [
-  { value: 'car',              label: '🚗 Private Car' },
-  { value: 'motorcycle',       label: '🏍️ Motorcycle' },
+const COMMUTE_OPTIONS: ReadonlyArray<{
+  value: UserProfile['commuteMode'];
+  label: string;
+}> = [
+  { value: 'car', label: '🚗 Private Car' },
+  { value: 'motorcycle', label: '🏍️ Motorcycle' },
   { value: 'public_transport', label: '🚌 Public Transport' },
-  { value: 'bicycle',          label: '🚴 Bicycle' },
-  { value: 'walking',          label: '🚶 Walking' },
-  { value: 'work_from_home',   label: '🏠 Work from Home' },
-];
+  { value: 'bicycle', label: '🚴 Bicycle' },
+  { value: 'walking', label: '🚶 Walking' },
+  { value: 'work_from_home', label: '🏠 Work from Home' },
+] as const;
+
+/** Quick-select Delhi NCR hotspots. */
+const DELHI_NCR_HOTSPOTS: readonly string[] = [
+  'Anand Vihar, New Delhi',
+  'Jahangirpuri, Delhi',
+  'RK Puram, New Delhi',
+  'Rohini, Delhi',
+  'Sector 62, Noida',
+  'Cyber City, Gurugram',
+] as const;
+
+/** Household vulnerability toggle items. */
+const HOUSEHOLD_TOGGLES: ReadonlyArray<{ name: 'hasChildren' | 'hasElderly'; label: string }> = [
+  { name: 'hasChildren', label: '👶 Children under 12' },
+  { name: 'hasElderly', label: '👴 Adults over 65' },
+] as const;
 
 /**
  * `FormField` — Accessible wrapper for a labelled form control.
- * Associates label and input via `htmlFor` / `id`.
  */
 function FormField({
   label,
@@ -65,25 +90,194 @@ function FormField({
 }: {
   readonly label: string;
   readonly htmlFor: string;
-  readonly required?: boolean;
+  readonly required?: boolean | undefined;
   readonly children: React.ReactNode;
-  readonly hint?: string;
+  readonly hint?: string | undefined;
 }): React.ReactElement {
   return (
     <div className="flex flex-col gap-1.5">
-      <label
-        htmlFor={htmlFor}
-        className="text-sm font-semibold text-sky-900"
-      >
+      <label htmlFor={htmlFor} className="text-sm font-semibold text-sky-900">
         {label}
-        {required && (
-          <span aria-hidden="true" className="ml-1 text-red-500">*</span>
-        )}
+        {required && <span aria-hidden="true" className="ml-1 text-red-500">*</span>}
       </label>
       {hint && <p className="text-xs text-sky-600 font-medium" id={`${htmlFor}-hint`}>{hint}</p>}
       {children}
     </div>
   );
+}
+
+/**
+ * `HotspotChips` — Interactive quick-selection buttons for Delhi NCR pollution hotspots.
+ */
+function HotspotChips({
+  onSelectHotspot,
+}: {
+  readonly onSelectHotspot: (spot: string) => void;
+}): React.ReactElement {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+      <span className="text-[11px] font-semibold text-sky-800">Delhi-NCR Hotspots:</span>
+      {DELHI_NCR_HOTSPOTS.map((spot) => (
+        <button
+          key={spot}
+          type="button"
+          onClick={() => onSelectHotspot(spot)}
+          className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-800 hover:bg-sky-100 transition-colors shadow-2xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+        >
+          {spot.split(',')[0]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * `VulnerabilityGrid` — Multi-select checkbox grid for health conditions.
+ */
+function VulnerabilityGrid({
+  selected,
+  onToggle,
+  error,
+}: {
+  readonly selected: string[];
+  readonly onToggle: (value: string) => void;
+  readonly error?: string | undefined;
+}): React.ReactElement {
+  return (
+    <fieldset>
+      <legend className="text-sm font-semibold text-sky-900 mb-1.5 flex items-center gap-1.5">
+        <Heart size={14} aria-hidden="true" className="text-red-500" />
+        Health Vulnerabilities
+        <span aria-hidden="true" className="text-red-500">*</span>
+      </legend>
+      <p className="text-xs text-sky-600 font-medium mb-3">
+        Select all conditions that apply to your household to tailor protective advice.
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {HEALTH_OPTIONS.map(({ value, label }) => {
+          const isChecked = selected.includes(value);
+          return (
+            <label
+              key={value}
+              className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-all ${
+                isChecked
+                  ? 'border-sky-600 bg-sky-50 text-sky-900 shadow-sm ring-1 ring-sky-500'
+                  : 'border-sky-200 bg-white text-sky-800 hover:border-sky-300 hover:bg-sky-50/50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                value={value}
+                checked={isChecked}
+                onChange={() => onToggle(value)}
+                className="sr-only"
+                aria-checked={isChecked}
+              />
+              <span
+                aria-hidden="true"
+                className={`h-3.5 w-3.5 shrink-0 rounded border transition-colors ${
+                  isChecked ? 'border-sky-600 bg-sky-600' : 'border-sky-300 bg-white'
+                }`}
+              />
+              {label}
+            </label>
+          );
+        })}
+      </div>
+      {error && <p role="alert" className="text-xs text-red-600 mt-2 font-medium">{error}</p>}
+    </fieldset>
+  );
+}
+
+/**
+ * `HouseholdToggles` — Checkboxes for vulnerable family members (children, elderly).
+ */
+function HouseholdToggles(): React.ReactElement {
+  return (
+    <fieldset>
+      <legend className="text-sm font-semibold text-sky-900 mb-3">Household Vulnerable Members</legend>
+      <div className="flex flex-wrap gap-4">
+        {HOUSEHOLD_TOGGLES.map(({ name, label }) => (
+          <label key={name} className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              name={name}
+              value="true"
+              className="h-4 w-4 rounded border-sky-300 text-sky-600 focus:ring-sky-500"
+            />
+            <span className="text-sm text-sky-900 font-semibold">{label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+/**
+ * `LanguagePreference` — Language selection between English and Hindi.
+ */
+function LanguagePreference(): React.ReactElement {
+  return (
+    <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3.5">
+      <label className="text-xs font-bold uppercase tracking-wider text-sky-900 flex items-center gap-1.5 mb-2">
+        <Languages size={15} className="text-sky-600" />
+        <span>Plan Advisory Language</span>
+      </label>
+      <div className="flex items-center gap-4">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
+          <input type="radio" name="language" value="en" defaultChecked className="text-sky-600 focus:ring-sky-500" />
+          <span>English (Default)</span>
+        </label>
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
+          <input type="radio" name="language" value="hi" className="text-sky-600 focus:ring-sky-500" />
+          <span>हिंदी (Hindi)</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Extracts raw profile payload from submitted form data.
+ *
+ * @param data - Form data instance.
+ * @param selectedVulnerabilities - Selected vulnerability slugs.
+ * @returns Unvalidated profile record.
+ */
+function extractRawProfile(
+  data: FormData,
+  selectedVulnerabilities: string[]
+): Record<string, unknown> {
+  const vulnerabilitiesToSubmit =
+    selectedVulnerabilities.length > 0 ? selectedVulnerabilities : ['none'];
+
+  return {
+    city: (data.get('city') as string | null) ?? '',
+    healthVulnerabilities: vulnerabilitiesToSubmit,
+    activityLevel: (data.get('activityLevel') as string | null) ?? 'lightly_active',
+    hasChildren: data.get('hasChildren') === 'true',
+    hasElderly: data.get('hasElderly') === 'true',
+    commuteMode: (data.get('commuteMode') as string | null) ?? 'public_transport',
+    additionalContext: (data.get('additionalContext') as string | null) || undefined,
+    language: (data.get('language') as 'en' | 'hi' | null) ?? 'en',
+  };
+}
+
+/**
+ * Maps Zod error issues into a concise field-to-message error dictionary.
+ *
+ * @param error - Zod validation error.
+ * @returns Mapped error record.
+ */
+function mapZodFieldErrors(error: z.ZodError): Partial<Record<keyof UserProfile, string>> {
+  const flat = error.flatten().fieldErrors;
+  const mapped: Partial<Record<keyof UserProfile, string>> = {};
+  (Object.keys(flat) as (keyof UserProfile)[]).forEach((key) => {
+    const msgs = flat[key as keyof typeof flat];
+    const firstMsg = msgs?.[0];
+    if (firstMsg) mapped[key] = firstMsg;
+  });
+  return mapped;
 }
 
 /**
@@ -97,24 +291,27 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
   const [fieldErrors, setFieldErrors] = React.useState<Partial<Record<keyof UserProfile, string>>>({});
   const [selectedVulnerabilities, setSelectedVulnerabilities] = React.useState<string[]>([]);
 
-  /**
-   * Toggles a health vulnerability checkbox on/off.
-   * When "none" is selected, all others are cleared.
-   */
   const handleVulnerabilityToggle = useCallback((value: string) => {
     setSelectedVulnerabilities((prev) => {
       if (value === 'none') return ['none'];
       const without = prev.filter((v) => v !== 'none');
-      return without.includes(value)
-        ? without.filter((v) => v !== value)
-        : [...without, value];
+      return without.includes(value) ? without.filter((v) => v !== value) : [...without, value];
     });
   }, []);
 
-  /**
-   * Reads form values, validates with Zod, and calls `onSubmit`.
-   * Sets field-level errors on validation failure.
-   */
+  const handleSelectHotspot = useCallback((spot: string) => {
+    const input = document.getElementById(`${baseId}-city`) as HTMLInputElement | null;
+    if (input) {
+      input.value = spot;
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next.city;
+        return next;
+      });
+      input.focus();
+    }
+  }, [baseId]);
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -123,33 +320,11 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
       const form = formRef.current;
       if (!form) return;
 
-      const data = new FormData(form);
-
-      const vulnerabilitiesToSubmit =
-        selectedVulnerabilities.length > 0 ? selectedVulnerabilities : ['none'];
-
-      const rawProfile = {
-        city: (data.get('city') as string | null) ?? '',
-        healthVulnerabilities: vulnerabilitiesToSubmit,
-        activityLevel: (data.get('activityLevel') as string | null) ?? 'lightly_active',
-        hasChildren: data.get('hasChildren') === 'true',
-        hasElderly: data.get('hasElderly') === 'true',
-        commuteMode: (data.get('commuteMode') as string | null) ?? 'public_transport',
-        additionalContext: (data.get('additionalContext') as string | null) || undefined,
-        language: (data.get('language') as 'en' | 'hi' | null) ?? 'en',
-      };
-
+      const rawProfile = extractRawProfile(new FormData(form), selectedVulnerabilities);
       const result = UserProfileSchema.safeParse(rawProfile);
 
       if (!result.success) {
-        const flat = result.error.flatten().fieldErrors;
-        const mapped: Partial<Record<keyof UserProfile, string>> = {};
-        (Object.keys(flat) as (keyof UserProfile)[]).forEach((key) => {
-          const msgs = flat[key as keyof typeof flat];
-          const firstMsg = msgs?.[0];
-          if (firstMsg) mapped[key] = firstMsg;
-        });
-        setFieldErrors(mapped);
+        setFieldErrors(mapZodFieldErrors(result.error));
         return;
       }
 
@@ -166,7 +341,6 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
       noValidate
       className="space-y-6"
     >
-      {/* ── Micro-Location ── */}
       <FormField
         label="Your City or Micro-Location"
         htmlFor={`${baseId}-city`}
@@ -188,9 +362,9 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
             aria-required="true"
             aria-describedby={fieldErrors.city ? `${baseId}-city-error` : `${baseId}-city-hint`}
             aria-invalid={!!fieldErrors.city}
-            className={`w-full rounded-lg border py-2.5 pl-9 pr-4 text-sm text-sky-900 placeholder-sky-400 outline-none transition-colors bg-white
-              focus:ring-2 focus:ring-sky-500 focus:border-sky-500
-              ${fieldErrors.city ? 'border-red-400 ring-1 ring-red-300' : 'border-sky-200 hover:border-sky-300'}`}
+            className={`w-full rounded-lg border py-2.5 pl-9 pr-4 text-sm text-sky-900 placeholder-sky-400 outline-none transition-colors bg-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 ${
+              fieldErrors.city ? 'border-red-400 ring-1 ring-red-300' : 'border-sky-200 hover:border-sky-300'
+            }`}
           />
         </div>
         {fieldErrors.city && (
@@ -198,90 +372,15 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
             {fieldErrors.city}
           </p>
         )}
-
-        {/* Quick Delhi NCR Hotspots */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <span className="text-[11px] font-semibold text-sky-800">Delhi-NCR Hotspots:</span>
-          {[
-            'Anand Vihar, New Delhi',
-            'Jahangirpuri, Delhi',
-            'RK Puram, New Delhi',
-            'Rohini, Delhi',
-            'Sector 62, Noida',
-            'Cyber City, Gurugram',
-          ].map((spot) => (
-            <button
-              key={spot}
-              type="button"
-              onClick={() => {
-                const input = document.getElementById(`${baseId}-city`) as HTMLInputElement | null;
-                if (input) {
-                  input.value = spot;
-                  setFieldErrors((prev) => {
-                    const next = { ...prev };
-                    delete next.city;
-                    return next;
-                  });
-                  input.focus();
-                }
-              }}
-              className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-800 hover:bg-sky-100 transition-colors shadow-2xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-            >
-              {spot.split(',')[0]}
-            </button>
-          ))}
-        </div>
+        <HotspotChips onSelectHotspot={handleSelectHotspot} />
       </FormField>
 
-      {/* ── Health Vulnerabilities ── */}
-      <fieldset>
-        <legend className="text-sm font-semibold text-sky-900 mb-1.5 flex items-center gap-1.5">
-          <Heart size={14} aria-hidden="true" className="text-red-500" />
-          Health Vulnerabilities
-          <span aria-hidden="true" className="text-red-500">*</span>
-        </legend>
-        <p className="text-xs text-sky-600 font-medium mb-3">
-          Select all conditions that apply to your household to tailor protective advice.
-        </p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {HEALTH_OPTIONS.map(({ value, label }) => {
-            const isChecked = selectedVulnerabilities.includes(value);
-            return (
-              <label
-                key={value}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-all
-                  ${isChecked
-                    ? 'border-sky-600 bg-sky-50 text-sky-900 shadow-sm ring-1 ring-sky-500'
-                    : 'border-sky-200 bg-white text-sky-800 hover:border-sky-300 hover:bg-sky-50/50'
-                  }`}
-              >
-                <input
-                  type="checkbox"
-                  value={value}
-                  checked={isChecked}
-                  onChange={() => handleVulnerabilityToggle(value)}
-                  className="sr-only"
-                  aria-checked={isChecked}
-                />
-                <span
-                  aria-hidden="true"
-                  className={`h-3.5 w-3.5 shrink-0 rounded border transition-colors ${
-                    isChecked ? 'border-sky-600 bg-sky-600' : 'border-sky-300 bg-white'
-                  }`}
-                />
-                {label}
-              </label>
-            );
-          })}
-        </div>
-        {fieldErrors.healthVulnerabilities && (
-          <p role="alert" className="text-xs text-red-600 mt-2 font-medium">
-            {fieldErrors.healthVulnerabilities}
-          </p>
-        )}
-      </fieldset>
+      <VulnerabilityGrid
+        selected={selectedVulnerabilities}
+        onToggle={handleVulnerabilityToggle}
+        error={fieldErrors.healthVulnerabilities}
+      />
 
-      {/* ── Activity Level ── */}
       <FormField label="Outdoor Activity Level" htmlFor={`${baseId}-activity`} required>
         <div className="relative">
           <Activity
@@ -303,7 +402,6 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
         </div>
       </FormField>
 
-      {/* ── Commute Mode ── */}
       <FormField label="Primary Daily Commute" htmlFor={`${baseId}-commute`} required>
         <div className="relative">
           <Car
@@ -325,28 +423,8 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
         </div>
       </FormField>
 
-      {/* ── Household toggles ── */}
-      <fieldset>
-        <legend className="text-sm font-semibold text-sky-900 mb-3">Household Vulnerable Members</legend>
-        <div className="flex flex-wrap gap-4">
-          {[
-            { name: 'hasChildren', label: '👶 Children under 12' },
-            { name: 'hasElderly',  label: '👴 Adults over 65' },
-          ].map(({ name, label }) => (
-            <label key={name} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                name={name}
-                value="true"
-                className="h-4 w-4 rounded border-sky-300 text-sky-600 focus:ring-sky-500"
-              />
-              <span className="text-sm text-sky-900 font-semibold">{label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <HouseholdToggles />
 
-      {/* ── Additional Context ── */}
       <FormField
         label="Additional Context / Local Concerns"
         htmlFor={`${baseId}-context`}
@@ -363,44 +441,13 @@ export function ProfileForm({ onSubmit, isLoading }: ProfileFormProps): React.Re
         />
       </FormField>
 
-      {/* ── Language Preference ── */}
-      <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3.5">
-        <label className="text-xs font-bold uppercase tracking-wider text-sky-900 flex items-center gap-1.5 mb-2">
-          <Languages size={15} className="text-sky-600" />
-          <span>Plan Advisory Language</span>
-        </label>
-        <div className="flex items-center gap-4">
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
-            <input
-              type="radio"
-              name="language"
-              value="en"
-              defaultChecked
-              className="text-sky-600 focus:ring-sky-500"
-            />
-            <span>English (Default)</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-sky-900">
-            <input
-              type="radio"
-              name="language"
-              value="hi"
-              className="text-sky-600 focus:ring-sky-500"
-            />
-            <span>हिंदी (Hindi)</span>
-          </label>
-        </div>
-      </div>
+      <LanguagePreference />
 
-      {/* ── Submit ── */}
       <button
         type="submit"
         disabled={isLoading}
         aria-busy={isLoading}
-        className="group relative w-full overflow-hidden rounded-xl bg-sky-600 px-6 py-3.5 text-sm font-bold text-white shadow-md transition-all duration-200
-          hover:bg-sky-700 hover:shadow-lg active:scale-[0.98]
-          focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2
-          disabled:cursor-not-allowed disabled:opacity-60"
+        className="group relative w-full overflow-hidden rounded-xl bg-sky-600 px-6 py-3.5 text-sm font-bold text-white shadow-md transition-all duration-200 hover:bg-sky-700 hover:shadow-lg active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="relative z-10 flex items-center justify-center gap-2">
           <Sparkles
