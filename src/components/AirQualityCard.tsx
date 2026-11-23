@@ -13,6 +13,7 @@
 import React from 'react';
 import { MapPin, AlertTriangle, Activity, Database, Clock, Wind } from 'lucide-react';
 import { getAqiConfig, isEmergencyLevel, estimatePm25, getCpcbHealthImpact } from '@/lib/aqi-utils';
+import { CPCB_MIN_AQI, CPCB_MAX_AQI } from '@/lib/cpcb-aqi';
 import { AqiBadge } from './AqiBadge';
 import type { AirQualityCardProps, AqiDisplayConfig } from '@/lib/types';
 
@@ -30,21 +31,21 @@ function getProgressColor(aqi: number): string {
  * `CpcbProgressBar` — Progress indicator mapped strictly across the 0–500 CPCB spectrum.
  */
 function CpcbProgressBar({ aqiValue }: { readonly aqiValue: number }): React.ReactElement {
-  const percentage = Math.min(100, Math.max(0, (aqiValue / 500) * 100));
+  const percentage = Math.min(100, Math.max(0, (aqiValue / CPCB_MAX_AQI) * 100));
 
   return (
     <div className="pt-2">
       <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-slate-500">
-        <span>0 (Good)</span>
+        <span>{CPCB_MIN_AQI} (Good)</span>
         <span className="font-bold uppercase tracking-wider text-slate-700">Official CPCB Scale (0 – 500)</span>
-        <span>500 (Severe)</span>
+        <span>{CPCB_MAX_AQI} (Severe)</span>
       </div>
 
       <div
         role="progressbar"
         aria-valuenow={aqiValue}
-        aria-valuemin={0}
-        aria-valuemax={500}
+        aria-valuemin={CPCB_MIN_AQI}
+        aria-valuemax={CPCB_MAX_AQI}
         aria-label="Air Quality Index on the CPCB scale"
         className="h-3 w-full overflow-hidden rounded-full bg-white/80 p-0.5 ring-1 ring-inset ring-slate-300/80 shadow-inner"
       >

@@ -59,6 +59,13 @@ export interface ContiguousVentilationInterval {
   co2Protocol: string;
 }
 
+/** Indoor CO2 guidance advisory protocol. */
+export interface IndoorCo2Guidance {
+  alertLevel: 'normal' | 'moderate' | 'critical';
+  action: string;
+  technicalDetails: string;
+}
+
 /** Overall 24-hour ventilation analysis result. */
 export interface FullVentilationAnalysis {
   overallStatus: 'safe_window_available' | 'caution_only' | 'sealed_mandatory' | 'insufficient_data';
@@ -74,11 +81,7 @@ export interface FullVentilationAnalysis {
   };
   contiguousIntervals: ContiguousVentilationInterval[];
   hourlyEvaluations: EvaluatedVentilationHour[];
-  indoorCo2Guidance: {
-    alertLevel: 'normal' | 'moderate' | 'critical';
-    action: string;
-    technicalDetails: string;
-  };
+  indoorCo2Guidance: IndoorCo2Guidance;
   meteorologicalSynthesis: string;
 }
 

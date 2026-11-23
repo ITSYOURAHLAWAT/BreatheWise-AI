@@ -24,6 +24,12 @@ interface HourVentilationState {
   readonly dotClass: string;
 }
 
+/** Maximum CPCB AQI threshold for a recommended aeration hour. */
+const HOURLY_RECOMMENDED_MAX_AQI = 100;
+
+/** Maximum CPCB AQI threshold for a cautious, brief aeration hour. */
+const HOURLY_CAUTION_MAX_AQI = 250;
+
 /**
  * Maps CPCB AQI to a ventilation recommendation state aligned with the scientific engine.
  *
@@ -31,7 +37,7 @@ interface HourVentilationState {
  * @returns Standardised hour state descriptor.
  */
 function getHourState(aqi: number): HourVentilationState {
-  if (aqi <= 100) {
+  if (aqi <= HOURLY_RECOMMENDED_MAX_AQI) {
     return {
       status: 'safe',
       label: 'Recommended',
@@ -39,7 +45,7 @@ function getHourState(aqi: number): HourVentilationState {
       dotClass: 'bg-emerald-500',
     };
   }
-  if (aqi <= 250) {
+  if (aqi <= HOURLY_CAUTION_MAX_AQI) {
     return {
       status: 'caution',
       label: 'Caution / Brief',

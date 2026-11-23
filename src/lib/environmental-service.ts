@@ -189,6 +189,9 @@ interface CacheEntry {
 const CACHE = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
+/** Conversion factor from Open-Meteo CO readings in µg/m³ to CPCB standard mg/m³. */
+const CO_UG_TO_MG_DIVISOR = 1000;
+
 /**
  * Constructs external API URLs for Open-Meteo Air Quality and Weather endpoints.
  *
@@ -217,7 +220,7 @@ function parseRawPollutants(currAq: {
 }): { rawPollutants: RawPollutantConcentrations; coMgM3: number } {
   const coMgM3 =
     typeof currAq.carbon_monoxide === 'number'
-      ? Number((currAq.carbon_monoxide / 1000).toFixed(2))
+      ? Number((currAq.carbon_monoxide / CO_UG_TO_MG_DIVISOR).toFixed(2))
       : 0;
 
   const rawPollutants: RawPollutantConcentrations = {
@@ -352,7 +355,7 @@ function construct24HourSequence(
     const pm25 = hourlyPm25[i] ?? 0;
     const pm10 = hourlyPm10[i] ?? 0;
     const no2 = hourlyNo2[i] ?? 0;
-    const co = (hourlyCo[i] ?? 0) / 1000;
+    const co = (hourlyCo[i] ?? 0) / CO_UG_TO_MG_DIVISOR;
     const o3 = hourlyO3[i] ?? 0;
 
     const weatherIdx = weatherTimes.findIndex((wt) => wt === timeStr);

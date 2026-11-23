@@ -41,7 +41,7 @@ export function EmergencyTips({ tips }: EmergencyTipsProps): React.ReactElement 
       <ul className="space-y-2.5" aria-label="Emergency action list">
         {tips.map((tip, index) => (
           <li
-            key={index}
+            key={`emergency-tip-${index}-${tip.slice(0, 16)}`}
             className="flex items-start gap-2.5 text-sm text-red-900"
           >
             <span

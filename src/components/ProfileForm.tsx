@@ -247,7 +247,7 @@ function LanguagePreference(): React.ReactElement {
 function extractRawProfile(
   data: FormData,
   selectedVulnerabilities: string[]
-): Record<string, unknown> {
+): Record<keyof UserProfile, unknown> {
   const vulnerabilitiesToSubmit =
     selectedVulnerabilities.length > 0 ? selectedVulnerabilities : ['none'];
 

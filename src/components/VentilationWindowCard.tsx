@@ -23,26 +23,11 @@ import {
   Layers,
   Activity,
 } from 'lucide-react';
-import type { VentilationWindowCardProps } from '@/lib/types';
-
-/** Strongly-typed shape for contiguous intervals in the UI view. */
-interface ContiguousIntervalItem {
-  id: string;
-  startTime: string;
-  endTime: string;
-  durationHours: number;
-  status: 'safe' | 'caution' | 'unsafe';
-  averageAqi: number;
-  averagePm25: number;
-  recommendation: string;
-}
-
-/** Strongly-typed shape for indoor CO2 advice block. */
-interface IndoorCo2AdviceItem {
-  alertLevel: 'normal' | 'moderate' | 'critical';
-  action: string;
-  technicalDetails: string;
-}
+import type {
+  VentilationWindowCardProps,
+  ContiguousVentilationInterval,
+  IndoorCo2Guidance,
+} from '@/lib/types';
 
 /** Theme classes based on ventilation status. */
 function getVentilationTheme(isSafe: boolean, isCaution: boolean) {
@@ -138,7 +123,7 @@ function OperationalProtocolCard({
 function ContiguousIntervalTimeline({
   intervals,
 }: {
-  readonly intervals: readonly ContiguousIntervalItem[];
+  readonly intervals: readonly ContiguousVentilationInterval[];
 }): React.ReactElement {
   return (
     <div className="pt-3 border-t border-black/10">
@@ -201,7 +186,7 @@ function ContiguousIntervalTimeline({
 /**
  * `IndoorCo2AdviceBox` — Technical trade-off guidance comparing indoor CO2 vs outdoor PM2.5.
  */
-function IndoorCo2AdviceBox({ advice }: { readonly advice: IndoorCo2AdviceItem }): React.ReactElement {
+function IndoorCo2AdviceBox({ advice }: { readonly advice: IndoorCo2Guidance }): React.ReactElement {
   return (
     <div className="rounded-2xl bg-white/70 border border-black/5 p-4 text-xs space-y-1">
       <div className="flex items-center gap-2 font-bold text-slate-800 uppercase tracking-wider">
@@ -231,14 +216,8 @@ export function VentilationWindowCard({ window }: VentilationWindowCardProps): R
 
   const theme = getVentilationTheme(isSafe, isCaution);
 
-  const rawIntervals = Array.isArray(window.contiguousIntervals)
-    ? (window.contiguousIntervals as unknown as ContiguousIntervalItem[])
-    : undefined;
-
-  const co2Advice =
-    window.indoorCo2Advice && typeof window.indoorCo2Advice === 'object'
-      ? (window.indoorCo2Advice as unknown as IndoorCo2AdviceItem)
-      : undefined;
+  const rawIntervals = window.contiguousIntervals;
+  const co2Advice = window.indoorCo2Advice;
 
   return (
     <article

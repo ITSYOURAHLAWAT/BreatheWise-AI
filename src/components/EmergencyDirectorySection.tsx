@@ -45,9 +45,9 @@ function EmergencyHotlinesStrip({
         <span>One-Touch Emergency Dispatch Hotlines</span>
       </h4>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {hotlines.map((hotline, idx) => (
+        {hotlines.map((hotline) => (
           <a
-            key={idx}
+            key={hotline.number}
             href={`tel:${hotline.number.split('/')[0]?.trim()}`}
             className="group flex flex-col justify-between rounded-2xl border border-red-200 bg-white p-3.5 hover:border-red-400 hover:shadow-xs transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500"
             aria-label={`Call ${hotline.label} at ${hotline.number}`}
@@ -98,9 +98,9 @@ function RedFlagSymptomsCard({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {symptoms.map((symptom, idx) => (
+        {symptoms.map((symptom) => (
           <div
-            key={idx}
+            key={symptom.symptom}
             className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col justify-between"
           >
             <div>

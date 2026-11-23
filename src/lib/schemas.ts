@@ -10,6 +10,11 @@
  */
 
 import { z } from 'zod';
+import { CPCB_MIN_AQI, CPCB_MAX_AQI } from './cpcb-aqi.ts';
+import type { GrapRegulationInfo } from './grap-regulations.ts';
+import type { EmergencyDirectoryResult } from './emergency-directory.ts';
+import type { EnvironmentalSnapshot } from './environmental-service.ts';
+import type { ContiguousVentilationInterval, IndoorCo2Guidance } from './ventilation-engine.ts';
 
 // ─── Enumerations ────────────────────────────────────────────────────────────
 
@@ -168,7 +173,7 @@ export const HourlyForecastItemSchema = z.object({
   /** Classified CPCB AQI severity band. */
   aqiCategory: AqiCategoryEnum,
   /** Numerical AQI value on the CPCB 0-500 scale. */
-  aqiValue: z.number().int().min(0).max(500),
+  aqiValue: z.number().int().min(CPCB_MIN_AQI).max(CPCB_MAX_AQI),
   /** Concise tactical advice or trend note for this hour window. */
   shortNote: z.string().min(1),
 });
@@ -195,9 +200,9 @@ export const SafeVentilationWindowSchema = z.object({
   /** Grounded scientific explanation of atmospheric dynamics. */
   scientificReasoning: z.string().optional(),
   /** Contiguous intervals across the 24-hour cycle. */
-  contiguousIntervals: z.array(z.record(z.string(), z.unknown())).optional(),
+  contiguousIntervals: z.array(z.custom<ContiguousVentilationInterval>((val) => typeof val === 'object' && val !== null)).optional(),
   /** Indoor CO2 displacement protocol vs particulate intrusion. */
-  indoorCo2Advice: z.record(z.string(), z.unknown()).optional(),
+  indoorCo2Advice: z.custom<IndoorCo2Guidance>((val) => typeof val === 'object' && val !== null).optional(),
 });
 
 /** Inferred TypeScript type from `SafeVentilationWindowSchema`. */
@@ -209,7 +214,7 @@ export type SafeVentilationWindow = z.infer<typeof SafeVentilationWindowSchema>;
  */
 export const AiResponseSchema = z.object({
   aqiCategory: AqiCategoryEnum,
-  aqiValue: z.number().int().min(0).max(500),
+  aqiValue: z.number().int().min(CPCB_MIN_AQI).max(CPCB_MAX_AQI),
   alertMessage: z.string().min(1),
   summaryHeadline: z.string().min(1),
   lowEmissionRoutines: z.array(RoutineItemSchema).min(1),
@@ -220,9 +225,9 @@ export const AiResponseSchema = z.object({
   emergencyTips: z.array(z.string()).min(1),
   generatedAt: z.string().datetime(),
   prominentPollutant: z.string().optional(),
-  environmentalData: z.record(z.string(), z.unknown()).optional(),
-  grapRegulation: z.record(z.string(), z.unknown()).optional(),
-  emergencyDirectory: z.record(z.string(), z.unknown()).optional(),
+  environmentalData: z.custom<EnvironmentalSnapshot>((val) => typeof val === 'object' && val !== null).optional(),
+  grapRegulation: z.custom<GrapRegulationInfo>((val) => typeof val === 'object' && val !== null).optional(),
+  emergencyDirectory: z.custom<EmergencyDirectoryResult>((val) => typeof val === 'object' && val !== null).optional(),
 });
 
 /** Inferred TypeScript type from `AiResponseSchema`. */

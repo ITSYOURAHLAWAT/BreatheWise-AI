@@ -56,38 +56,21 @@ interface PlanDashboardProps {
  * Extracts validated GRAP regulations or falls back to deterministic rule engine.
  */
 function extractGrapRegulation(plan: AiResponse): GrapRegulationInfo {
-  if (plan.grapRegulation && typeof plan.grapRegulation === 'object' && 'stage' in plan.grapRegulation) {
-    return plan.grapRegulation as unknown as GrapRegulationInfo;
-  }
-  return getGrapRegulation(plan.aqiValue);
+  return plan.grapRegulation ?? getGrapRegulation(plan.aqiValue);
 }
 
 /**
  * Extracts validated Emergency Directory or falls back to geographic registry.
  */
 function extractEmergencyDirectory(plan: AiResponse, city: string): EmergencyDirectoryResult {
-  if (
-    plan.emergencyDirectory &&
-    typeof plan.emergencyDirectory === 'object' &&
-    'regionalHospitals' in plan.emergencyDirectory
-  ) {
-    return plan.emergencyDirectory as unknown as EmergencyDirectoryResult;
-  }
-  return getEmergencyDirectory(city);
+  return plan.emergencyDirectory ?? getEmergencyDirectory(city);
 }
 
 /**
  * Extracts verified Environmental Snapshot if available in the response.
  */
 function extractEnvironmentalSnapshot(plan: AiResponse): EnvironmentalSnapshot | undefined {
-  if (
-    plan.environmentalData &&
-    typeof plan.environmentalData === 'object' &&
-    'status' in plan.environmentalData
-  ) {
-    return plan.environmentalData as unknown as EnvironmentalSnapshot;
-  }
-  return undefined;
+  return plan.environmentalData;
 }
 
 /**

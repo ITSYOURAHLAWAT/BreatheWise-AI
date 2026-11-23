@@ -21,6 +21,15 @@
  *  If either criterion is violated, AQI cannot be officially determined.
  */
 
+/** Official minimum AQI value on the Indian CPCB scale. */
+export const CPCB_MIN_AQI = 0;
+
+/** Official maximum AQI value on the Indian CPCB 6-band scale (Severe band upper bound). */
+export const CPCB_MAX_AQI = 500;
+
+/** Official statutory minimum number of monitored pollutants required by CPCB. */
+export const CPCB_MIN_POLLUTANTS_REQUIRED = 3;
+
 /** Recognized CPCB AQI categories. */
 export type AqiCategory =
   | 'good'
@@ -31,13 +40,35 @@ export type AqiCategory =
   | 'severe';
 
 /**
+ * Result classification of deterministic CPCB AQI evaluation.
+ * Returns standard `AqiCategory` for 0–500 or `'Out of range / Exceptional'` for values > 500 or negative.
+ */
+export type CpcbAqiClassification = AqiCategory | 'Out of range / Exceptional';
+
+/**
+ * Normalizes an AQI category or exceptional classification to a valid standard CPCB category.
+ * Values marked 'Out of range / Exceptional' or undefined default safely to 'severe'.
+ *
+ * @param category - Raw CPCB classification string.
+ * @returns Standard CPCB AQI category.
+ */
+export function normalizeAqiCategory(
+  category: CpcbAqiClassification | null | undefined
+): AqiCategory {
+  if (!category || category === 'Out of range / Exceptional') {
+    return 'severe';
+  }
+  return category;
+}
+
+/**
  * Converts a numeric AQI value to the official Indian CPCB 6-band category.
  *
  * @param value - Numeric AQI value (0 to 500).
  * @returns Mapped CPCB category string or 'Out of range / Exceptional'.
  */
-export function aqiValueToCategory(value: number): AqiCategory | 'Out of range / Exceptional' {
-  if (value < 0 || value > 500) {
+export function aqiValueToCategory(value: number): CpcbAqiClassification {
+  if (value < CPCB_MIN_AQI || value > CPCB_MAX_AQI) {
     return 'Out of range / Exceptional';
   }
   if (value <= 50) return 'good';
@@ -211,7 +242,7 @@ function isInvalidConcentration(concentration: unknown): boolean {
  */
 function interpolateSubIndex(bp: CpcbBreakpoint, concentration: number): number {
   const interpolated = bp.iLo + ((bp.iHi - bp.iLo) / (bp.bHi - bp.bLo)) * (concentration - bp.bLo);
-  return Math.min(500, Math.max(0, Math.round(interpolated)));
+  return Math.min(CPCB_MAX_AQI, Math.max(CPCB_MIN_AQI, Math.round(interpolated)));
 }
 
 /**
@@ -357,7 +388,7 @@ function findProminentSubIndex(
     }
   }
 
-  return { maxSubIndex: Math.max(0, Math.min(500, maxSubIndex)), prominent };
+  return { maxSubIndex: Math.max(CPCB_MIN_AQI, Math.min(CPCB_MAX_AQI, maxSubIndex)), prominent };
 }
 
 /**
@@ -376,7 +407,7 @@ export function calculateCpcbAqi(
   const calculatedAt = new Date().toISOString();
   const { subIndices, validCount, hasParticulate } = collectValidSubIndices(concentrations);
 
-  if (validCount < 3) {
+  if (validCount < CPCB_MIN_POLLUTANTS_REQUIRED) {
     return {
       aqi: null,
       aqiCategory: null,
@@ -385,7 +416,7 @@ export function calculateCpcbAqi(
       isSufficientData: false,
       validPollutantsCount: validCount,
       hasParticulateRequirement: hasParticulate,
-      insufficiencyReason: `Insufficient data: CPCB requires at least 3 monitored pollutants; only ${validCount} available.`,
+      insufficiencyReason: `Insufficient data: CPCB requires at least ${CPCB_MIN_POLLUTANTS_REQUIRED} monitored pollutants; only ${validCount} available.`,
       calculatedAt,
     };
   }

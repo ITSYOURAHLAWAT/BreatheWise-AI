@@ -164,7 +164,7 @@ function enrichPlan(
   const plan = { ...basePlan };
 
   if (snapshot) {
-    plan.environmentalData = snapshot as unknown as Record<string, unknown>;
+    plan.environmentalData = snapshot;
     if (snapshot.cpcbResult.prominentPollutant) {
       plan.prominentPollutant = snapshot.cpcbResult.prominentPollutant;
     }
@@ -179,13 +179,13 @@ function enrichPlan(
       status: ventilation.primaryWindow.status,
       confidence: ventilation.primaryWindow.confidence,
       scientificReasoning: ventilation.primaryWindow.scientificReasoning,
-      contiguousIntervals: ventilation.contiguousIntervals as unknown as Array<Record<string, unknown>>,
-      indoorCo2Advice: ventilation.indoorCo2Guidance as unknown as Record<string, unknown>,
+      contiguousIntervals: ventilation.contiguousIntervals,
+      indoorCo2Advice: ventilation.indoorCo2Guidance,
     };
   }
 
-  plan.grapRegulation = getGrapRegulation(plan.aqiValue) as unknown as Record<string, unknown>;
-  plan.emergencyDirectory = getEmergencyDirectory(city) as unknown as Record<string, unknown>;
+  plan.grapRegulation = getGrapRegulation(plan.aqiValue);
+  plan.emergencyDirectory = getEmergencyDirectory(city);
 
   return plan;
 }

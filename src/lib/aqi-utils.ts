@@ -14,6 +14,21 @@
  */
 
 import type { AqiCategory, AqiDisplayConfig } from './types.ts';
+import {
+  aqiValueToCategory,
+  normalizeAqiCategory,
+  CPCB_MIN_AQI,
+  CPCB_MAX_AQI,
+} from './cpcb-aqi.ts';
+import type { CpcbAqiClassification } from './cpcb-aqi.ts';
+
+export {
+  aqiValueToCategory,
+  normalizeAqiCategory,
+  CPCB_MIN_AQI,
+  CPCB_MAX_AQI,
+};
+export type { CpcbAqiClassification };
 
 /**
  * `AQI_DISPLAY_CONFIG` — Maps each CPCB AQI category to its visual presentation.
@@ -89,38 +104,7 @@ export function getAqiConfig(category: AqiCategory): AqiDisplayConfig {
   return config ?? EXCEPTIONAL_AQI_CONFIG;
 }
 
-/**
- * Result type of deterministic CPCB AQI evaluation.
- * Returns standard `AqiCategory` for 0–500 or `'Out of range / Exceptional'` for values > 500 or negative.
- */
-export type CpcbAqiClassification = AqiCategory | 'Out of range / Exceptional';
 
-/**
- * Converts a numeric AQI value to the official Indian CPCB 6-band category.
- *
- * CPCB Scale:
- *  - 0–50:    Good
- *  - 51–100:  Satisfactory
- *  - 101–200: Moderate
- *  - 201–300: Poor
- *  - 301–400: Very Poor
- *  - 401–500: Severe
- *  - > 500:   Out of range / Exceptional
- *
- * @param value - Numeric AQI value.
- * @returns The strictly mapped CPCB category or "Out of range / Exceptional".
- */
-export function aqiValueToCategory(value: number): CpcbAqiClassification {
-  if (value < 0 || value > 500) {
-    return 'Out of range / Exceptional';
-  }
-  if (value <= 50) return 'good';
-  if (value <= 100) return 'satisfactory';
-  if (value <= 200) return 'moderate';
-  if (value <= 300) return 'poor';
-  if (value <= 400) return 'very_poor';
-  return 'severe';
-}
 
 /**
  * Returns `true` if the AQI category warrants an emergency alert banner (CPCB Severe band).
@@ -193,12 +177,12 @@ export function formatCost(cost: 'free' | 'low' | 'medium' | 'high'): string {
  * @returns Estimated PM2.5 concentration in µg/m³.
  */
 export function estimatePm25(aqi: number): number {
-  if (aqi <= 50) return Math.round((Math.max(0, aqi) / 50) * 30);
+  if (aqi <= 50) return Math.round((Math.max(CPCB_MIN_AQI, aqi) / 50) * 30);
   if (aqi <= 100) return Math.round(30 + ((aqi - 50) / 50) * 30);
   if (aqi <= 200) return Math.round(60 + ((aqi - 100) / 100) * 30);
   if (aqi <= 300) return Math.round(90 + ((aqi - 200) / 100) * 30);
   if (aqi <= 400) return Math.round(120 + ((aqi - 300) / 100) * 130);
-  return Math.round(250 + ((Math.min(500, aqi) - 400) / 100) * 100);
+  return Math.round(250 + ((Math.min(CPCB_MAX_AQI, aqi) - 400) / 100) * 100);
 }
 
 /**

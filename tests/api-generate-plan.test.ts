@@ -185,9 +185,9 @@ describe('Plan Generation & CPCB Data Pipeline Integration', () => {
     assert.equal(plan.impactMetrics.length, 4);
     assert.ok(plan.emergencyTips.length >= 4);
     assert.ok(plan.grapRegulation !== undefined);
-    assert.equal((plan.grapRegulation as { stage: string }).stage, 'STAGE_2');
+    assert.equal(plan.grapRegulation?.stage, 'STAGE_2');
     assert.ok(plan.emergencyDirectory !== undefined);
-    assert.ok(Array.isArray((plan.emergencyDirectory as { regionalHospitals: unknown[] }).regionalHospitals));
+    assert.ok(Array.isArray(plan.emergencyDirectory?.regionalHospitals));
   });
 
   it('generates schema-compliant bilingual Hindi plan when requested', () => {

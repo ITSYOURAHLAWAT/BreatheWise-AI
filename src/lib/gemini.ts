@@ -20,7 +20,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import type { Schema } from '@google/genai';
 import { AiResponseSchema } from './schemas.ts';
 import type { UserProfile, AiResponse, AqiCategory } from './types.ts';
-import { aqiValueToCategory } from './aqi-utils.ts';
+import { aqiValueToCategory, normalizeAqiCategory } from './cpcb-aqi.ts';
 import type { EnvironmentalSnapshot } from './environmental-service.ts';
 import type { FullVentilationAnalysis } from './ventilation-engine.ts';
 import { getGrapRegulation } from './grap-regulations.ts';
@@ -638,7 +638,7 @@ function determineBaselineAqi(
   if (snapshot && snapshot.status === 'available' && typeof snapshot.cpcbResult.aqi === 'number') {
     const aqi = snapshot.cpcbResult.aqi;
     const cat = snapshot.cpcbResult.aqiCategory;
-    const aqiCategory = (cat === 'Out of range / Exceptional' ? 'severe' : cat) ?? 'severe';
+    const aqiCategory = normalizeAqiCategory(cat);
     return { baseAqi: aqi, aqiCategory };
   }
 
@@ -673,8 +673,7 @@ function determineBaselineAqi(
     ? DEFAULT_DECCAN_AQI
     : DEFAULT_BASELINE_AQI;
 
-  const category = aqiValueToCategory(baseAqi);
-  const aqiCategory = category === 'Out of range / Exceptional' ? 'severe' : category;
+  const aqiCategory = normalizeAqiCategory(aqiValueToCategory(baseAqi));
 
   return { baseAqi, aqiCategory };
 }
@@ -826,8 +825,7 @@ function buildFallbackHourlyForecast(baseAqi: number, isSafe: boolean) {
   const nightTrap = Math.min(500, Math.round(baseAqi * 1.1));
 
   const toCategory = (val: number): AqiCategory => {
-    const cat = aqiValueToCategory(val);
-    return (cat === 'Out of range / Exceptional' ? 'severe' : cat) as AqiCategory;
+    return normalizeAqiCategory(aqiValueToCategory(val));
   };
 
   return [
@@ -972,7 +970,7 @@ export function generateDeterministicFallbackPlan(
     safeVentilationWindow: buildFallbackVentilationWindow(afternoonDip, isSafe, ventilationAnalysis),
     emergencyTips: buildFallbackEmergencyTips(isHindi),
     generatedAt: new Date().toISOString(),
-    grapRegulation: getGrapRegulation(baseAqi) as unknown as Record<string, unknown>,
-    emergencyDirectory: getEmergencyDirectory(profile.city) as unknown as Record<string, unknown>,
+    grapRegulation: getGrapRegulation(baseAqi),
+    emergencyDirectory: getEmergencyDirectory(profile.city),
   };
 }

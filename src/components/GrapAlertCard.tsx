@@ -25,7 +25,10 @@ import type { GrapRegulationInfo } from '@/lib/types';
 export interface GrapAlertCardProps {
   /** Statutory GRAP regulation details. */
   readonly regulation?: GrapRegulationInfo | undefined;
-  /** Alias for regulation details. */
+  /**
+   * Alias for regulation details provided for backward compatibility.
+   * @deprecated Use `regulation` instead.
+   */
   readonly grap?: GrapRegulationInfo | undefined;
   /** Current numerical AQI. */
   readonly currentAqi?: number | undefined;
@@ -224,8 +227,8 @@ function GrapDirectivesDrawer({
               <span>Statutory &amp; Health Do&apos;s</span>
             </h4>
             <ul className="space-y-2 text-xs text-emerald-900 leading-relaxed">
-              {doGuidelines.map((item, idx) => (
-                <li key={idx} className="flex items-start gap-2">
+              {doGuidelines.map((item) => (
+                <li key={item} className="flex items-start gap-2">
                   <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" />
                   <span>{item}</span>
                 </li>
@@ -239,8 +242,8 @@ function GrapDirectivesDrawer({
               <span>Strict Prohibitions (Don&apos;ts)</span>
             </h4>
             <ul className="space-y-2 text-xs text-rose-900 leading-relaxed">
-              {dontGuidelines.map((item, idx) => (
-                <li key={idx} className="flex items-start gap-2">
+              {dontGuidelines.map((item) => (
+                <li key={item} className="flex items-start gap-2">
                   <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-600" />
                   <span>{item}</span>
                 </li>

@@ -15,6 +15,20 @@
  * Air Quality Management in National Capital Region and Adjoining Areas Act, 2021.
  */
 
+import { CPCB_MIN_AQI, CPCB_MAX_AQI } from './cpcb-aqi.ts';
+
+/** Statutory CPCB AQI threshold for CAQM GRAP Stage I ('Poor': 201–300). */
+export const GRAP_STAGE_1_THRESHOLD = 201;
+
+/** Statutory CPCB AQI threshold for CAQM GRAP Stage II ('Very Poor': 301–400). */
+export const GRAP_STAGE_2_THRESHOLD = 301;
+
+/** Statutory CPCB AQI threshold for CAQM GRAP Stage III ('Severe': 401–450). */
+export const GRAP_STAGE_3_THRESHOLD = 401;
+
+/** Statutory CPCB AQI threshold for CAQM GRAP Stage IV ('Severe+' / Public Health Emergency: > 450). */
+export const GRAP_STAGE_4_THRESHOLD = 450;
+
 export type GrapStage = 'NONE' | 'STAGE_1' | 'STAGE_2' | 'STAGE_3' | 'STAGE_4';
 
 export interface GrapCitizenGuideline {
@@ -51,15 +65,18 @@ const OFFICIAL_AUTHORITY = 'Commission for Air Quality Management in NCR & Adjoi
  * @returns Complete statutory GRAP mandate, restrictions, and citizen guidelines
  */
 export function getGrapRegulation(aqi: number): GrapRegulationInfo {
-  const safeAqi = Math.max(0, Math.min(500, Number.isFinite(aqi) ? aqi : 0));
+  const safeAqi = Math.max(
+    CPCB_MIN_AQI,
+    Math.min(CPCB_MAX_AQI, Number.isFinite(aqi) ? aqi : CPCB_MIN_AQI)
+  );
 
-  if (safeAqi > 450) {
+  if (safeAqi > GRAP_STAGE_4_THRESHOLD) {
     return {
       stage: 'STAGE_4',
       stageNumber: 4,
       stageLabel: 'GRAP Stage IV',
       statutoryStatus: 'Severe+ / Public Health Emergency',
-      aqiThresholdDescription: 'Enacted when CPCB AQI exceeds 450',
+      aqiThresholdDescription: `Enacted when CPCB AQI exceeds ${GRAP_STAGE_4_THRESHOLD}`,
       severityColor: {
         bg: 'bg-rose-950/90',
         text: 'text-rose-100',
@@ -96,13 +113,13 @@ export function getGrapRegulation(aqi: number): GrapRegulationInfo {
     };
   }
 
-  if (safeAqi >= 401) {
+  if (safeAqi >= GRAP_STAGE_3_THRESHOLD) {
     return {
       stage: 'STAGE_3',
       stageNumber: 3,
       stageLabel: 'GRAP Stage III',
       statutoryStatus: 'Severe Air Quality',
-      aqiThresholdDescription: 'Enacted when CPCB AQI falls in 401–450 range',
+      aqiThresholdDescription: `Enacted when CPCB AQI falls in ${GRAP_STAGE_3_THRESHOLD}–${GRAP_STAGE_4_THRESHOLD} range`,
       severityColor: {
         bg: 'bg-red-950/80',
         text: 'text-red-100',
@@ -136,13 +153,13 @@ export function getGrapRegulation(aqi: number): GrapRegulationInfo {
     };
   }
 
-  if (safeAqi >= 301) {
+  if (safeAqi >= GRAP_STAGE_2_THRESHOLD) {
     return {
       stage: 'STAGE_2',
       stageNumber: 2,
       stageLabel: 'GRAP Stage II',
       statutoryStatus: 'Very Poor Air Quality',
-      aqiThresholdDescription: 'Enacted when CPCB AQI falls in 301–400 range',
+      aqiThresholdDescription: `Enacted when CPCB AQI falls in ${GRAP_STAGE_2_THRESHOLD}–400 range`,
       severityColor: {
         bg: 'bg-amber-950/70',
         text: 'text-amber-100',
@@ -175,13 +192,13 @@ export function getGrapRegulation(aqi: number): GrapRegulationInfo {
     };
   }
 
-  if (safeAqi >= 201) {
+  if (safeAqi >= GRAP_STAGE_1_THRESHOLD) {
     return {
       stage: 'STAGE_1',
       stageNumber: 1,
       stageLabel: 'GRAP Stage I',
       statutoryStatus: 'Poor Air Quality',
-      aqiThresholdDescription: 'Enacted when CPCB AQI falls in 201–300 range',
+      aqiThresholdDescription: `Enacted when CPCB AQI falls in ${GRAP_STAGE_1_THRESHOLD}–300 range`,
       severityColor: {
         bg: 'bg-yellow-950/60',
         text: 'text-yellow-100',

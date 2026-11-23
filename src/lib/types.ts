@@ -1,24 +1,21 @@
 /**
  * @file types.ts
- * @description Supplementary TypeScript interfaces and utility types for BreatheWise AI.
+ * @description Centralized TypeScript interfaces, utility types, and component prop definitions for BreatheWise AI.
  *
- * These types extend or complement the Zod-inferred types in `schemas.ts`
- * to cover UI state, component props, and API communication contracts.
+ * Provides a clean, strongly-typed aggregation layer connecting:
+ *  - Zod-inferred domain models (`schemas.ts`)
+ *  - Environmental telemetry services (`environmental-service.ts`)
+ *  - CPCB AQI mathematical calculation engine (`cpcb-aqi.ts`)
+ *  - Atmospheric ventilation and dispersion engine (`ventilation-engine.ts`)
+ *  - Statutory CAQM GRAP regulations (`grap-regulations.ts`)
+ *  - Emergency medical triage directory (`emergency-directory.ts`)
+ *  - UI state and presentation component contracts
  */
 
-import type {
-  AiResponse,
-  UserProfile,
-  AqiCategoryEnum,
-  RoutineItem,
-  IndoorHack,
-  ImpactMetric,
-  HourlyForecastItem,
-  SafeVentilationWindow,
-} from './schemas.ts';
 import type { z } from 'zod';
+import type { AqiCategoryEnum } from './schemas.ts';
 
-// ─── Re-exports for convenience ───────────────────────────────────────────────
+// ─── Domain Model Re-exports ─────────────────────────────────────────────────
 
 export type {
   AiResponse,
@@ -28,9 +25,9 @@ export type {
   IndoorHack,
   HourlyForecastItem,
   SafeVentilationWindow,
-} from './schemas';
+} from './schemas.ts';
 
-import type {
+export type {
   MicroLocation,
   DataSourceMetadata,
   MeteorologicalSnapshot,
@@ -44,6 +41,7 @@ export type {
   RawPollutantConcentrations,
   PollutantSubIndexResult,
   CpcbCalculationResult,
+  CpcbAqiClassification,
 } from './cpcb-aqi.ts';
 
 export type {
@@ -52,6 +50,7 @@ export type {
   EvaluatedVentilationHour,
   ContiguousVentilationInterval,
   FullVentilationAnalysis,
+  IndoorCo2Guidance,
 } from './ventilation-engine.ts';
 
 export type {
@@ -67,9 +66,20 @@ export type {
   EmergencyDirectoryResult,
 } from './emergency-directory.ts';
 
-// ─── AQI Utilities ───────────────────────────────────────────────────────────
+import type {
+  AiResponse,
+  UserProfile,
+  RoutineItem,
+  IndoorHack,
+  ImpactMetric,
+  HourlyForecastItem,
+  SafeVentilationWindow,
+} from './schemas.ts';
+import type { EnvironmentalSnapshot } from './environmental-service.ts';
 
-/** All valid AQI category string literals. */
+// ─── AQI Utilities & Visual Display Types ────────────────────────────────────
+
+/** All valid AQI category string literals inferred directly from `AqiCategoryEnum`. */
 export type AqiCategory = z.infer<typeof AqiCategoryEnum>;
 
 /**
@@ -89,20 +99,20 @@ export interface AqiDisplayConfig {
   emoji: string;
 }
 
-// ─── Form State ───────────────────────────────────────────────────────────────
+// ─── Application & Form State ────────────────────────────────────────────────
 
 /**
  * `FormStatus` — Tracks the current state of the AI plan generation request.
  *
  * - `idle`    — Initial state; no request in flight.
- * - `loading` — Request sent; awaiting Gemini response.
- * - `success` — Plan successfully generated and validated.
+ * - `loading` — Request sent; awaiting telemetry and Gemini response.
+ * - `success` — Plan successfully generated, validated, and enriched.
  * - `error`   — Request failed; `errorMessage` populated.
  */
 export type FormStatus = 'idle' | 'loading' | 'success' | 'error';
 
 /**
- * `AppState` — Top-level client state managed by the main dashboard page.
+ * `AppState` — Top-level client state managed by the main dashboard page (`page.tsx`).
  */
 export interface AppState {
   status: FormStatus;
@@ -113,7 +123,7 @@ export interface AppState {
 // ─── Component Props ──────────────────────────────────────────────────────────
 
 /**
- * `ProfileFormProps` — Props for the `ProfileForm` component.
+ * Props for the `ProfileForm` component.
  */
 export interface ProfileFormProps {
   /** Called with validated data when the form is submitted. */
@@ -123,16 +133,8 @@ export interface ProfileFormProps {
 }
 
 /**
- * `AirQualityCardProps` — Props for the `AirQualityCard` component.
+ * Props for the `AirQualityCard` component.
  */
-export type {
-  MicroLocation,
-  DataSourceMetadata,
-  MeteorologicalSnapshot,
-  HourlyEnvironmentalPoint,
-  EnvironmentalSnapshot,
-};
-
 export interface AirQualityCardProps {
   aqiValue: number;
   aqiCategory: AqiCategory;
@@ -144,49 +146,49 @@ export interface AirQualityCardProps {
 }
 
 /**
- * `RoutineListProps` — Props for the `RoutineList` component.
+ * Props for the `RoutineList` component.
  */
 export interface RoutineListProps {
   routines: RoutineItem[];
 }
 
 /**
- * `IndoorHacksListProps` — Props for the `IndoorHacksList` component.
+ * Props for the `IndoorHacksList` component.
  */
 export interface IndoorHacksListProps {
   hacks: IndoorHack[];
 }
 
 /**
- * `ImpactMetricProps` — Props for a single `ImpactMetric` display tile.
+ * Props for a single `ImpactMetric` display tile.
  */
 export interface ImpactMetricProps {
   metric: ImpactMetric;
 }
 
 /**
- * `HourlyForecastProps` — Props for the `HourlyForecast` component.
+ * Props for the `HourlyForecast` component.
  */
 export interface HourlyForecastProps {
   forecast: HourlyForecastItem[];
 }
 
 /**
- * `VentilationWindowCardProps` — Props for the Safe Ventilation Window card.
+ * Props for the Safe Ventilation Window card.
  */
 export interface VentilationWindowCardProps {
   window: SafeVentilationWindow;
 }
 
 /**
- * `EmergencyTipsProps` — Props for the `EmergencyTips` component.
+ * Props for the `EmergencyTips` component.
  */
 export interface EmergencyTipsProps {
   tips: string[];
 }
 
 /**
- * `AqiBadgeProps` — Props for the inline `AqiBadge` component.
+ * Props for the inline `AqiBadge` component.
  */
 export interface AqiBadgeProps {
   category: AqiCategory;
@@ -195,7 +197,7 @@ export interface AqiBadgeProps {
 }
 
 /**
- * `LoadingSpinnerProps` — Props for the animated loading indicator.
+ * Props for the animated loading indicator.
  */
 export interface LoadingSpinnerProps {
   /** Accessible label for screen readers. */
@@ -203,7 +205,7 @@ export interface LoadingSpinnerProps {
 }
 
 /**
- * `ErrorBannerProps` — Props for the global error display component.
+ * Props for the global error display component.
  */
 export interface ErrorBannerProps {
   message: string;
@@ -211,7 +213,7 @@ export interface ErrorBannerProps {
 }
 
 /**
- * `SectionHeaderProps` — Props for a reusable section heading component.
+ * Props for a reusable section heading component.
  */
 export interface SectionHeaderProps {
   title: string;
